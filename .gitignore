@@ -1,0 +1,11 @@
+.vs/
+bin/
+obj/
+artifacts/
+.idea/
+*.user
+*.suo
+.env
+.env.local
+keelmatrix.telemetry.json
+TestResults/
