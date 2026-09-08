@@ -36,6 +36,14 @@ jobs:
         with:
           dotnet-version: 10.0.400
 
+      - name: Configure macOS temporary directory
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          temp_directory="$GITHUB_WORKSPACE/artifacts/test-temp"
+          mkdir -p "$temp_directory"
+          echo "TMPDIR=$temp_directory/" >> "$GITHUB_ENV"
+
       - name: Restore
         run: dotnet restore KeelMatrix.HookReplay.sln
 
@@ -62,7 +70,9 @@ jobs:
           --no-build
           --filter "FullyQualifiedName~Cassette_is_deterministic_and_does_not_persist_secrets"
 
-      - name: Verify formatting and analyzers
+      # Keep one canonical format gate because checkout line endings differ by platform.
+      - name: Verify formatting and analyzers (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
         run: dotnet format KeelMatrix.HookReplay.sln --verify-no-changes
 
       - name: Check for vulnerable dependencies
