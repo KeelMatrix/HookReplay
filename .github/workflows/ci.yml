@@ -40,7 +40,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          temp_directory="$GITHUB_WORKSPACE/artifacts/test-temp"
+          temp_directory="$RUNNER_TEMP/hookreplay"
           mkdir -p "$temp_directory"
           echo "TMPDIR=$temp_directory/" >> "$GITHUB_ENV"
 
