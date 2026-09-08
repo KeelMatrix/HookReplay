@@ -72,7 +72,38 @@ try
             "Unsupported persisted response content echoed the stored body.");
     }
 
-    Console.WriteLine("Package consumer smoke passed: record, offline replay, and fail-closed validation.");
+    string unsupportedRequestCassette = Path.Combine(root, "unsupported-request.json");
+    await File.WriteAllTextAsync(
+        unsupportedRequestCassette,
+        "{\"schemaVersion\":1,\"interactions\":[{\"request\":{\"method\":\"POST\",\"normalizedUri\":\"https://example.test/\",\"bodyFingerprint\":null,\"bodyContentType\":\"application/octet-stream\",\"body\":\"not-supported\",\"headers\":[],\"matchHeaders\":[]},\"response\":{\"statusCode\":200,\"reasonPhrase\":\"OK\",\"version\":\"1.1\",\"headers\":[],\"bodyHeaders\":[],\"body\":null}}]}");
+
+    var unsupportedRequestThrowing = new ThrowingHandler();
+    var unsupportedRequestOptions = new HookReplayOptions(unsupportedRequestCassette)
+    {
+        Mode = HookReplayMode.Replay
+    };
+    using var unsupportedRequestClient = new HttpClient(
+        new HookReplayHandler(unsupportedRequestOptions, unsupportedRequestThrowing));
+    try
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://example.test/");
+        using HttpResponseMessage _ = await unsupportedRequestClient.SendAsync(request);
+        throw new InvalidOperationException(
+            "Unsupported persisted request content was accepted during replay.");
+    }
+    catch (HookReplayException exception)
+    {
+        Ensure(
+            exception is HookReplayMalformedCassetteException ||
+            exception is HookReplayUnsupportedContentException,
+            "Unsupported persisted request content did not fail with a HookReplay validation exception.");
+        Ensure(
+            !exception.Message.Contains("not-supported", StringComparison.Ordinal),
+            "Unsupported persisted request content echoed the stored body.");
+    }
+    Ensure(unsupportedRequestThrowing.Calls == 0, "Invalid request content reached the inner handler.");
+
+    Console.WriteLine("Package consumer smoke passed: record, offline replay, and request/response fail-closed validation.");
 }
 finally
 {

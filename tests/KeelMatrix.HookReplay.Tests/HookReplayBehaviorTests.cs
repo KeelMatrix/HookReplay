@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using KeelMatrix.Redaction;
 using KeelMatrix.HookReplay;
 using Xunit;
@@ -390,6 +391,145 @@ public sealed class HookReplayBehaviorTests
     }
 
     [Fact]
+    public async Task Unsupported_persisted_request_content_fails_closed_before_matching_or_replay()
+    {
+        string cassette = NewCassettePath();
+        await File.WriteAllTextAsync(
+            cassette,
+            "{\"schemaVersion\":1,\"interactions\":[{\"request\":{\"method\":\"POST\",\"normalizedUri\":\"https://example.test/\",\"bodyFingerprint\":null,\"bodyContentType\":\"application/octet-stream\",\"body\":\"not-supported\",\"headers\":[],\"matchHeaders\":[]},\"response\":{\"statusCode\":200,\"reasonPhrase\":\"OK\",\"version\":\"1.1\",\"headers\":[],\"bodyHeaders\":[],\"body\":null}}]}");
+
+        try
+        {
+            var options = new HookReplayOptions(cassette)
+            {
+                Mode = HookReplayMode.Replay
+            };
+            var throwing = new ThrowingHandler();
+            using var client = new HttpClient(new HookReplayHandler(options, throwing));
+
+            HookReplayException exception = await Assert.ThrowsAnyAsync<HookReplayException>(
+                () => client.PostAsync("https://example.test/", content: null));
+
+            Assert.IsType<HookReplayUnsupportedContentException>(exception);
+            Assert.DoesNotContain("not-supported", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(0, throwing.Calls);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Theory]
+    [InlineData(null, "text/plain", "ordinary text")]
+    [InlineData("cf7e0cb3799813c75eb1ec05482a20a640dd269ce5c6479dbda0a88a0a0e01", null, "ordinary text")]
+    [InlineData(null, null, "ordinary text")]
+    [InlineData("cf7e0cb3799813c75eb1ec05482a20a640dd269ce5c6479dbda0a88a0a0e01", "text/plain", null)]
+    [InlineData("0000000000000000000000000000000000000000000000000000000000000000", "text/plain", "ordinary text")]
+    public async Task Persisted_request_body_relationships_must_be_consistent(
+        string? bodyFingerprint,
+        string? bodyContentType,
+        string? body)
+    {
+        string cassette = NewCassettePath();
+        await File.WriteAllTextAsync(cassette, CassetteWithRequest(bodyFingerprint, bodyContentType, body));
+
+        try
+        {
+            using var client = HookReplayClient.Create(new HookReplayOptions(cassette), new ThrowingHandler());
+            HookReplayMalformedCassetteException exception =
+                await Assert.ThrowsAsync<HookReplayMalformedCassetteException>(
+                    () => client.SendAsync(new HttpRequestMessage(HttpMethod.Post, "https://example.test/")));
+
+            Assert.Contains("request body", exception.Message, StringComparison.OrdinalIgnoreCase);
+            if (body is not null)
+                Assert.DoesNotContain(body, exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Persisted_json_request_body_must_remain_valid_json()
+    {
+        string cassette = NewCassettePath();
+        const string rawBody = "not-json";
+        await File.WriteAllTextAsync(
+            cassette,
+            CassetteWithRequest(
+                "0c21a879c732a67910d80988df4919d794f6a070aab610ef865032a28046b021",
+                "application/json",
+                rawBody));
+
+        try
+        {
+            using var client = HookReplayClient.Create(new HookReplayOptions(cassette), new ThrowingHandler());
+            HookReplayUnsupportedContentException exception =
+                await Assert.ThrowsAsync<HookReplayUnsupportedContentException>(
+                    () => client.SendAsync(new HttpRequestMessage(HttpMethod.Post, "https://example.test/")));
+
+            Assert.Contains("valid JSON", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(rawBody, exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Persisted_request_body_content_type_must_match_its_header()
+    {
+        string cassette = NewCassettePath();
+        await File.WriteAllTextAsync(
+            cassette,
+            CassetteWithRequest(
+                "cf7e0cb3799813c75eb1ec05482a20a640dd269ce5c6479dbda0a88a0a0e01",
+                "text/plain; charset=utf-8",
+                "ordinary text",
+                "[{\"name\":\"Content-Type\",\"value\":\"application/json\"}]"));
+
+        try
+        {
+            using var client = HookReplayClient.Create(new HookReplayOptions(cassette), new ThrowingHandler());
+            HookReplayMalformedCassetteException exception =
+                await Assert.ThrowsAsync<HookReplayMalformedCassetteException>(
+                    () => client.SendAsync(new HttpRequestMessage(HttpMethod.Post, "https://example.test/")));
+
+            Assert.Contains("content type", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("ordinary text", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Theory]
+    [InlineData("[{\"name\":\"x-unknown\",\"value\":\"value\"}]")]
+    [InlineData("[{\"name\":\"x-duplicate\",\"value\":\"one\"},{\"name\":\"X-DUPLICATE\",\"value\":\"two\"}]")]
+    public async Task Persisted_request_match_headers_must_refer_to_unique_request_headers(string matchHeaders)
+    {
+        string cassette = NewCassettePath();
+        await File.WriteAllTextAsync(
+            cassette,
+            CassetteWithRequest(null, null, null, "[]", matchHeaders));
+
+        try
+        {
+            using var client = HookReplayClient.Create(new HookReplayOptions(cassette), new ThrowingHandler());
+            await Assert.ThrowsAsync<HookReplayMalformedCassetteException>(
+                () => client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://example.test/")));
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
     public void Cassette_path_parent_traversal_is_rejected_before_file_io()
     {
         string directory = Path.Combine(Path.GetTempPath(), "hookreplay-boundary-" + Guid.NewGuid().ToString("N"));
@@ -769,6 +909,7 @@ public sealed class HookReplayBehaviorTests
     public async Task Unsupported_content_and_file_errors_are_explicit()
     {
         string contentCassette = NewCassettePath();
+        string emptyContentCassette = NewCassettePath();
         string directory = Path.Combine(Path.GetTempPath(), "hookreplay-file-error-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
 
@@ -788,6 +929,21 @@ public sealed class HookReplayBehaviorTests
                     () => client.SendAsync(request));
             }
 
+            using (var client = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(emptyContentCassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)))))
+            using (var request = new HttpRequestMessage(HttpMethod.Post, "https://example.test/empty-binary")
+            {
+                Content = new ByteArrayContent(Array.Empty<byte>())
+            })
+            {
+                request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                    "application/octet-stream");
+                await Assert.ThrowsAsync<HookReplayUnsupportedContentException>(
+                    () => client.SendAsync(request));
+            }
+            Assert.False(File.Exists(emptyContentCassette));
+
             using var fileErrorClient = new HttpClient(new HookReplayHandler(
                 new HookReplayOptions(directory) { Mode = HookReplayMode.Record },
                 new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK))));
@@ -797,6 +953,7 @@ public sealed class HookReplayBehaviorTests
         finally
         {
             DeleteCassette(contentCassette);
+            DeleteCassette(emptyContentCassette);
             if (Directory.Exists(directory))
                 Directory.Delete(directory, recursive: true);
         }
@@ -876,6 +1033,26 @@ public sealed class HookReplayBehaviorTests
             + ",\"reasonPhrase\":\"OK\",\"version\":\""
             + version
             + "\",\"headers\":[],\"bodyHeaders\":[],\"body\":null}}]}";
+    }
+
+    private static string CassetteWithRequest(
+        string? bodyFingerprint,
+        string? bodyContentType,
+        string? body,
+        string requestHeaders = "[]",
+        string matchHeaders = "[]")
+    {
+        return "{\"schemaVersion\":1,\"interactions\":[{\"request\":{\"method\":\"POST\",\"normalizedUri\":\"https://example.test/\",\"bodyFingerprint\":"
+            + JsonSerializer.Serialize(bodyFingerprint)
+            + ",\"bodyContentType\":"
+            + JsonSerializer.Serialize(bodyContentType)
+            + ",\"body\":"
+            + JsonSerializer.Serialize(body)
+            + ",\"headers\":"
+            + requestHeaders
+            + ",\"matchHeaders\":"
+            + matchHeaders
+            + "},\"response\":{\"statusCode\":200,\"reasonPhrase\":\"OK\",\"version\":\"1.1\",\"headers\":[],\"bodyHeaders\":[],\"body\":null}}]}";
     }
 
     private static async Task RecordSensitiveExchangeAsync(string cassette, string query)
