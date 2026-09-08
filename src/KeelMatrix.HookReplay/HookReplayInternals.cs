@@ -961,7 +961,7 @@ internal static class CassetteFile
     {
         JsonElement request = RequiredProperty(element, "request");
         JsonElement response = RequiredProperty(element, "response");
-        return new CassetteInteraction
+        var interaction = new CassetteInteraction
         {
             Request = new CassetteRequest
             {
@@ -985,6 +985,8 @@ internal static class CassetteFile
                 Body = ParseBody(response)
             }
         };
+        ValidateResponseContent(interaction.Response);
+        return interaction;
     }
 
     private static CassetteBody? ParseBody(JsonElement response)
@@ -997,6 +999,78 @@ internal static class CassetteFile
             ContentType = RequiredString(body, "contentType"),
             Text = RequiredString(body, "text")
         };
+    }
+
+    private static void ValidateResponseContent(CassetteResponse response)
+    {
+        MediaTypeHeaderValue? bodyContentType = response.Body is null
+            ? null
+            : ParseResponseContentType(response.Body.ContentType, "body content type");
+        CassetteHeader[] contentTypeHeaders = response.BodyHeaders
+            .Where(header => string.Equals(header.Name, "Content-Type", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        if (contentTypeHeaders.Length > 1)
+        {
+            throw new HookReplayMalformedCassetteException(
+                "Cassette response body headers must contain at most one Content-Type header.");
+        }
+
+        MediaTypeHeaderValue? headerContentType = contentTypeHeaders.Length == 0
+            ? null
+            : ParseResponseContentType(contentTypeHeaders[0].Value, "Content-Type header");
+        if (bodyContentType is not null &&
+            headerContentType is not null &&
+            !string.Equals(
+                bodyContentType.ToString(),
+                headerContentType.ToString(),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new HookReplayMalformedCassetteException(
+                "Cassette response body content type does not match its Content-Type header.");
+        }
+
+        if (response.Body is null || bodyContentType is null)
+        {
+            return;
+        }
+
+        string mediaType = bodyContentType.MediaType!;
+        if (!mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase) &&
+            !mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            using JsonDocument _ = JsonDocument.Parse(response.Body.Text);
+        }
+        catch (JsonException exception)
+        {
+            throw new HookReplayUnsupportedContentException(
+                "The cassette response body declares JSON but is not valid JSON.", exception);
+        }
+    }
+
+    private static MediaTypeHeaderValue ParseResponseContentType(string value, string propertyName)
+    {
+        if (!MediaTypeHeaderValue.TryParse(value, out MediaTypeHeaderValue? contentType) ||
+            contentType is null ||
+            string.IsNullOrWhiteSpace(contentType.MediaType))
+        {
+            throw new HookReplayMalformedCassetteException(
+                "Cassette response " + propertyName + " is not a valid media type.");
+        }
+
+        if (!HttpSanitizer.IsSupportedMediaType(contentType.MediaType))
+        {
+            throw new HookReplayUnsupportedContentException(
+                "Cassette response content type '" + contentType.MediaType +
+                "' is not supported. HookReplay supports text, JSON, form, and empty content.");
+        }
+
+        return contentType;
     }
 
     private static List<CassetteHeader> ParseHeaders(JsonElement parent, string name)

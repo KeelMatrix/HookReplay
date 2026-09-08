@@ -80,7 +80,7 @@ Mismatch diagnostics describe the nearest difference (method, normalized URI, se
 
 ## Cassette format and safety
 
-Cassettes are HookReplay schema version 1 JSON. They are UTF-8 with a final LF, stable property order, sorted headers/query parameters, and no machine-specific paths. Unsupported future schema versions fail with HookReplayUnsupportedCassetteVersionException; malformed files fail with HookReplayMalformedCassetteException.
+Cassettes are HookReplay schema version 1 JSON. They are UTF-8 with a final LF, stable property order, sorted headers/query parameters, and no machine-specific paths. Unsupported future schema versions fail with HookReplayUnsupportedCassetteVersionException; malformed files fail with HookReplayMalformedCassetteException. Replay also revalidates persisted response content types and body representations, so unsupported or internally inconsistent response content fails with a HookReplay-specific exception before a response is returned.
 
 Authorization, proxy authorization, cookies, set-cookie, API-key-like headers, sensitive query/form fields, and common secret properties in JSON bodies are structurally redacted. The package also applies the built-in KeelMatrix.Redaction protections. Add project-specific protection without touching cassette-writing stages; configured redactors are applied to opaque URI query values, non-structural header values, and text/JSON/form body values before either matching data or cassette bytes are created:
 
