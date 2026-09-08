@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using KeelMatrix.Redaction;
 using KeelMatrix.HookReplay;
 using Xunit;
 
@@ -294,6 +295,495 @@ public sealed class HookReplayBehaviorTests
         DeleteCassette(future);
     }
 
+    [Fact]
+    public void Cassette_path_parent_traversal_is_rejected_before_file_io()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "hookreplay-boundary-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string outside = Path.Combine(
+            Path.GetDirectoryName(directory)!,
+            "hookreplay-outside-" + Guid.NewGuid().ToString("N") + ".json");
+        string traversal = Path.Combine(directory, "..", Path.GetFileName(outside));
+
+        try
+        {
+            var options = new HookReplayOptions(traversal)
+            {
+                Mode = HookReplayMode.Record
+            };
+
+            HookReplayIOException exception = Assert.Throws<HookReplayIOException>(
+                () => new HookReplayHandler(options, new ScriptedHandler(_ => "not-used")));
+
+            Assert.Contains("parent-directory traversal", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(File.Exists(outside));
+            Assert.Empty(Directory.EnumerateFiles(directory));
+        }
+        finally
+        {
+            if (File.Exists(outside))
+                File.Delete(outside);
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Custom_redactor_protects_query_headers_and_body_before_durable_write()
+    {
+        string cassette = NewCassettePath();
+        const string rawSecret = "project-secret-opaque-value";
+        var options = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Record
+        };
+        options.Redactors.Add(new SentinelRedactor(rawSecret, "[CUSTOM]"));
+
+        try
+        {
+            using var client = new HttpClient(new HookReplayHandler(
+                options,
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("response-safe")
+                })));
+            using var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                "https://example.test/custom?opaque=" + Uri.EscapeDataString(rawSecret));
+            request.Headers.TryAddWithoutValidation("x-project-value", rawSecret);
+            request.Content = new StringContent(rawSecret, Encoding.UTF8, "text/plain");
+
+            await client.SendAsync(request);
+
+            string cassetteText = await File.ReadAllTextAsync(cassette);
+            Assert.DoesNotContain(rawSecret, cassetteText, StringComparison.Ordinal);
+            Assert.Contains("[CUSTOM]", cassetteText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Custom_redactor_protects_mismatch_diagnostics_for_opaque_query_values()
+    {
+        string cassette = NewCassettePath();
+        const string rawSecret = "project-secret-opaque-value";
+        var recordOptions = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Record
+        };
+        recordOptions.Redactors.Add(new SentinelRedactor(rawSecret, "[CUSTOM]"));
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                recordOptions,
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("safe")
+                }))))
+            {
+                await recorder.GetAsync(
+                    "https://example.test/diagnostics?opaque=" + Uri.EscapeDataString(rawSecret));
+            }
+
+            var replayOptions = new HookReplayOptions(cassette)
+            {
+                Mode = HookReplayMode.Replay
+            };
+            replayOptions.Redactors.Add(new SentinelRedactor(rawSecret, "[CUSTOM]"));
+            using var replay = new HttpClient(new HookReplayHandler(replayOptions, new ThrowingHandler()));
+            HookReplayMismatchException exception = await Assert.ThrowsAsync<HookReplayMismatchException>(
+                () => replay.GetAsync(
+                    "https://example.test/other?opaque=" + Uri.EscapeDataString(rawSecret)));
+
+            Assert.DoesNotContain(rawSecret, exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Sanitizer_failure_happens_before_any_cassette_bytes_are_written()
+    {
+        string cassette = NewCassettePath();
+        var options = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Record
+        };
+        options.Redactors.Add(new ThrowingRedactor());
+
+        try
+        {
+            using var client = new HttpClient(new HookReplayHandler(
+                options,
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK))));
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://example.test/sanitize")
+            {
+                Content = new StringContent("secret-value")
+            };
+
+            await Assert.ThrowsAsync<HookReplayUnsupportedContentException>(
+                () => client.SendAsync(request));
+            Assert.False(File.Exists(cassette));
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Redirect_responses_are_recorded_and_replayed_without_following()
+    {
+        string cassette = NewCassettePath();
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ =>
+                {
+                    var response = new HttpResponseMessage(HttpStatusCode.Redirect)
+                    {
+                        Headers = { Location = new Uri("https://example.test/final") }
+                    };
+                    return response;
+                }))))
+            {
+                HttpResponseMessage response = await recorder.GetAsync("https://example.test/redirect");
+                Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+                Assert.Equal("https://example.test/final", response.Headers.Location?.ToString());
+            }
+
+            using var replay = HookReplayClient.Create(new HookReplayOptions(cassette), new ThrowingHandler());
+            HttpResponseMessage replayed = await replay.GetAsync("https://example.test/redirect");
+            Assert.Equal(HttpStatusCode.Redirect, replayed.StatusCode);
+            Assert.Equal("https://example.test/final", replayed.Headers.Location?.ToString());
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public void Existing_reparse_point_in_cassette_path_is_rejected()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "hookreplay-link-" + Guid.NewGuid().ToString("N"));
+        string target = Path.Combine(root, "target");
+        string link = Path.Combine(root, "link");
+        Directory.CreateDirectory(target);
+
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(link, target);
+            }
+            catch (Exception exception) when (
+                exception is PlatformNotSupportedException ||
+                exception is UnauthorizedAccessException ||
+                exception is IOException)
+            {
+                return;
+            }
+
+            var options = new HookReplayOptions(Path.Combine(link, "cassette.json"));
+            Assert.Throws<HookReplayIOException>(() => new HookReplayHandler(options));
+        }
+        finally
+        {
+            if (File.Exists(link))
+                File.Delete(link);
+            else if (Directory.Exists(link))
+                Directory.Delete(link);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Telemetry_opt_out_does_not_change_record_or_replay_behavior()
+    {
+        string cassette = NewCassettePath();
+        string? previous = Environment.GetEnvironmentVariable("KEELMATRIX_NO_TELEMETRY");
+        Environment.SetEnvironmentVariable("KEELMATRIX_NO_TELEMETRY", "1");
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("telemetry-off")
+                }))))
+            {
+                await recorder.GetAsync("https://example.test/telemetry-off");
+            }
+
+            using var replay = HookReplayClient.Create(new HookReplayOptions(cassette), new ThrowingHandler());
+            Assert.Equal(
+                "telemetry-off",
+                await (await replay.GetAsync("https://example.test/telemetry-off")).Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("KEELMATRIX_NO_TELEMETRY", previous);
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Theory]
+    [InlineData("not-a-version", "200")]
+    [InlineData("1.1", "99")]
+    [InlineData("1.1", "600")]
+    public async Task Semantically_invalid_cassette_fields_fail_as_malformed(
+        string version,
+        string statusCode)
+    {
+        string cassette = NewCassettePath();
+        await File.WriteAllTextAsync(cassette, ValidCassette(version, statusCode));
+
+        try
+        {
+            using var client = HookReplayClient.Create(new HookReplayOptions(cassette));
+            HookReplayMalformedCassetteException exception = await Assert.ThrowsAsync<HookReplayMalformedCassetteException>(
+                () => client.GetAsync("https://example.test/"));
+
+            Assert.Contains("Cassette", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Invalid_persisted_uri_is_rejected_as_malformed()
+    {
+        string cassette = NewCassettePath();
+        await File.WriteAllTextAsync(cassette, ValidCassette("1.1", "200").Replace(
+            "https://example.test/",
+            "not-an-absolute-uri",
+            StringComparison.Ordinal));
+
+        try
+        {
+            using var client = HookReplayClient.Create(new HookReplayOptions(cassette));
+            await Assert.ThrowsAsync<HookReplayMalformedCassetteException>(
+                () => client.GetAsync("https://example.test/"));
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Empty_and_text_bodies_round_trip_at_the_handler_boundary()
+    {
+        string emptyCassette = NewCassettePath();
+        string textCassette = NewCassettePath();
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(emptyCassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.NoContent)))))
+            {
+                HttpResponseMessage response = await recorder.GetAsync("https://example.test/empty");
+                Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+                Assert.Equal(string.Empty, await response.Content.ReadAsStringAsync());
+            }
+
+            using (var replay = HookReplayClient.Create(new HookReplayOptions(emptyCassette), new ThrowingHandler()))
+            {
+                HttpResponseMessage response = await replay.GetAsync("https://example.test/empty");
+                Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+                Assert.Equal(string.Empty, await response.Content.ReadAsStringAsync());
+            }
+
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(textCassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("ordinary text")
+                }))))
+            {
+                await recorder.GetAsync("https://example.test/text");
+            }
+
+            using (var replay = HookReplayClient.Create(new HookReplayOptions(textCassette), new ThrowingHandler()))
+            {
+                HttpResponseMessage response = await replay.GetAsync("https://example.test/text");
+                Assert.Equal("ordinary text", await response.Content.ReadAsStringAsync());
+            }
+        }
+        finally
+        {
+            DeleteCassette(emptyCassette);
+            DeleteCassette(textCassette);
+        }
+    }
+
+    [Fact]
+    public async Task Disposed_request_and_response_content_fail_without_writing()
+    {
+        string requestCassette = NewCassettePath();
+        string responseCassette = NewCassettePath();
+
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "https://example.test/disposed")
+            {
+                Content = new StringContent("disposed")
+            };
+            request.Content.Dispose();
+            using (request)
+            using (var client = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(requestCassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)))))
+            {
+                await Assert.ThrowsAsync<HookReplayUnsupportedContentException>(
+                    () => client.SendAsync(request));
+            }
+
+            using (var client = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(responseCassette) { Mode = HookReplayMode.Record },
+                new DisposedResponseContentHandler())))
+            {
+                await Assert.ThrowsAsync<HookReplayUnsupportedContentException>(
+                    () => client.GetAsync("https://example.test/disposed-response"));
+            }
+
+            Assert.False(File.Exists(requestCassette));
+            Assert.False(File.Exists(responseCassette));
+        }
+        finally
+        {
+            DeleteCassette(requestCassette);
+            DeleteCassette(responseCassette);
+        }
+    }
+
+    [Fact]
+    public async Task Unsupported_content_and_file_errors_are_explicit()
+    {
+        string contentCassette = NewCassettePath();
+        string directory = Path.Combine(Path.GetTempPath(), "hookreplay-file-error-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            using (var client = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(contentCassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)))))
+            using (var request = new HttpRequestMessage(HttpMethod.Post, "https://example.test/binary")
+            {
+                Content = new ByteArrayContent(new byte[] { 1, 2, 3 })
+            })
+            {
+                request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                    "application/octet-stream");
+                await Assert.ThrowsAsync<HookReplayUnsupportedContentException>(
+                    () => client.SendAsync(request));
+            }
+
+            using var fileErrorClient = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(directory) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK))));
+            await Assert.ThrowsAsync<HookReplayIOException>(
+                () => fileErrorClient.GetAsync("https://example.test/file-error"));
+        }
+        finally
+        {
+            DeleteCassette(contentCassette);
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Cancellation_is_propagated_without_persisting_a_cassette()
+    {
+        string cassette = NewCassettePath();
+        using var started = new ManualResetEventSlim();
+        using var cancellation = new CancellationTokenSource();
+
+        try
+        {
+            var handler = new CancellationAwareHandler(started);
+            using var client = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette) { Mode = HookReplayMode.Record },
+                handler));
+            Task<HttpResponseMessage> request = client.GetAsync(
+                "https://example.test/cancel",
+                cancellation.Token);
+            Assert.True(started.Wait(TimeSpan.FromSeconds(5)));
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+            Assert.False(File.Exists(cassette));
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Telemetry_failure_cannot_break_record_or_replay_and_only_minimal_events_are_requested()
+    {
+        string cassette = NewCassettePath();
+        var telemetry = new RecordingTelemetry { ThrowOnUse = true };
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("safe")
+                }),
+                telemetry)))
+            {
+                HttpResponseMessage response = await recorder.GetAsync("https://example.test/telemetry");
+                Assert.Equal("safe", await response.Content.ReadAsStringAsync());
+            }
+
+            telemetry.ThrowOnUse = false;
+            using (var replay = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette),
+                new ThrowingHandler(),
+                telemetry)))
+            {
+                await replay.GetAsync("https://example.test/telemetry");
+            }
+
+            Assert.Equal(1, telemetry.Activations);
+            Assert.Equal(1, telemetry.Heartbeats);
+            Assert.Equal(new[] { "activation", "heartbeat", "activation", "heartbeat" }, telemetry.Events);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    private static string ValidCassette(string version, string statusCode)
+    {
+        return "{\"schemaVersion\":1,\"interactions\":[{\"request\":{\"method\":\"GET\",\"normalizedUri\":\"https://example.test/\",\"bodyFingerprint\":null,\"bodyContentType\":null,\"body\":null,\"headers\":[],\"matchHeaders\":[]},\"response\":{\"statusCode\":"
+            + statusCode
+            + ",\"reasonPhrase\":\"OK\",\"version\":\""
+            + version
+            + "\",\"headers\":[],\"bodyHeaders\":[],\"body\":null}}]}";
+    }
+
     private static async Task RecordSensitiveExchangeAsync(string cassette, string query)
     {
         var inner = new ResponseHandler(_ =>
@@ -391,6 +881,89 @@ public sealed class HookReplayBehaviorTests
             return request.Headers.TryGetValue("x-variant", out string? actual)
                 && recordedRequest.Headers.TryGetValue("x-variant", out string? recorded)
                 && string.Equals(actual, recorded, StringComparison.Ordinal);
+        }
+    }
+
+    private sealed class SentinelRedactor : ITextRedactor
+    {
+        private readonly string sentinel;
+        private readonly string replacement;
+
+        public SentinelRedactor(string sentinel, string replacement)
+        {
+            this.sentinel = sentinel;
+            this.replacement = replacement;
+        }
+
+        public string Redact(string input)
+        {
+            return input.Replace(sentinel, replacement, StringComparison.Ordinal);
+        }
+    }
+
+    private sealed class ThrowingRedactor : ITextRedactor
+    {
+        public string Redact(string input)
+        {
+            throw new InvalidOperationException("redactor failure");
+        }
+    }
+
+    private sealed class DisposedResponseContentHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("disposed")
+            };
+            response.Content.Dispose();
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class CancellationAwareHandler : HttpMessageHandler
+    {
+        private readonly ManualResetEventSlim started;
+
+        public CancellationAwareHandler(ManualResetEventSlim started)
+        {
+            this.started = started;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            started.Set();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+    }
+
+    private sealed class RecordingTelemetry : IHookReplayTelemetry
+    {
+        public int Activations { get; private set; }
+        public int Heartbeats { get; private set; }
+        public bool ThrowOnUse { get; set; }
+        public List<string> Events { get; } = new();
+
+        public void TrackActivation()
+        {
+            Events.Add("activation");
+            if (ThrowOnUse)
+                throw new InvalidOperationException("telemetry failure");
+            Activations++;
+        }
+
+        public void TrackHeartbeat()
+        {
+            Events.Add("heartbeat");
+            if (ThrowOnUse)
+                throw new InvalidOperationException("telemetry failure");
+            Heartbeats++;
         }
     }
 

@@ -57,11 +57,12 @@ internal sealed class RequestCapture
         HookReplayOptions options,
         CancellationToken cancellationToken)
     {
+        var sanitizer = new HttpSanitizer(options.Redactors);
         BodyCapture? body = await BodyCapture.CreateAsync(
             request.Content,
             options,
-            cancellationToken).ConfigureAwait(false);
-        var sanitizer = new HttpSanitizer(options.Redactors);
+            cancellationToken,
+            sanitizer).ConfigureAwait(false);
         List<CassetteHeader> persistedHeaders = sanitizer.SanitizeHeaderList(
             request.Headers,
             request.Content?.Headers);
@@ -75,7 +76,7 @@ internal sealed class RequestCapture
         var capture = new RequestCapture(
             new HookReplayRequest(
                 request.Method.Method,
-                UriNormalizer.Normalize(request.RequestUri),
+                UriNormalizer.Normalize(request.RequestUri, sanitizer),
                 body?.Fingerprint,
                 headers),
             body?.RawBytes,
@@ -140,11 +141,13 @@ internal sealed class ResponseCapture
         HookReplayOptions options,
         CancellationToken cancellationToken)
     {
+        var sanitizer = new HttpSanitizer(options.Redactors);
         BodyCapture? body = await BodyCapture.CreateAsync(
             response.Content,
             options,
-            cancellationToken).ConfigureAwait(false);
-        return new ResponseCapture(response, body, new HttpSanitizer(options.Redactors));
+            cancellationToken,
+            sanitizer).ConfigureAwait(false);
+        return new ResponseCapture(response, body, sanitizer);
     }
 }
 
@@ -173,11 +176,13 @@ internal sealed class BodyCapture
     public static async Task<BodyCapture?> CreateAsync(
         HttpContent? content,
         HookReplayOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        HttpSanitizer? sanitizer = null)
     {
         if (content is null)
             return null;
 
+        sanitizer ??= new HttpSanitizer(options.Redactors);
         List<CassetteHeader> originalHeaders = CaptureRawHeaders(content.Headers);
         byte[] bytes;
         try
@@ -213,10 +218,14 @@ internal sealed class BodyCapture
             return null;
 
         string contentType;
+        string mediaType;
         try
         {
-            contentType = content.Headers.ContentType?.ToString()
-                ?? "text/plain; charset=utf-8";
+            MediaTypeHeaderValue? contentTypeHeader = content.Headers.ContentType;
+            contentType = sanitizer.SanitizeHeaderValue(
+                "Content-Type",
+                contentTypeHeader?.ToString() ?? "text/plain; charset=utf-8");
+            mediaType = contentTypeHeader?.MediaType ?? "text/plain";
         }
         catch (ObjectDisposedException exception)
         {
@@ -224,7 +233,6 @@ internal sealed class BodyCapture
                 "The HTTP content headers were disposed before capture.", exception);
         }
 
-        string mediaType = content.Headers.ContentType?.MediaType ?? "text/plain";
         if (!HttpSanitizer.IsSupportedMediaType(mediaType))
             throw new HookReplayUnsupportedContentException(
                 "Content type '" + mediaType + "' is not supported. HookReplay supports text, JSON, form, and empty content.");
@@ -241,7 +249,6 @@ internal sealed class BodyCapture
                 "The HTTP content is not valid UTF-8 text.", exception);
         }
 
-        var sanitizer = new HttpSanitizer(options.Redactors);
         string sanitized = sanitizer.SanitizeBody(rawText, mediaType);
         return new BodyCapture(
             bytes,
@@ -372,7 +379,7 @@ internal sealed class HttpSanitizer
             .ToDictionary(
                 pair => pair.Key,
                 pair => string.Join("\n", pair.Value.Select(value =>
-                    IsSensitiveName(pair.Key) ? Redacted : ApplyTextRedactors(value))),
+                    SanitizeHeaderValue(pair.Key, value))),
                 StringComparer.OrdinalIgnoreCase);
     }
 
@@ -442,6 +449,11 @@ internal sealed class HttpSanitizer
         }
 
         return sanitized;
+    }
+
+    public string SanitizeHeaderValue(string name, string value)
+    {
+        return IsSensitiveName(name) ? Redacted : ApplyTextRedactors(value);
     }
 
     public static bool IsSensitiveName(string name)
@@ -567,7 +579,7 @@ internal sealed class HttpSanitizer
             {
                 destination.Add(new CassetteHeader(
                     pair.Key,
-                    IsSensitiveName(pair.Key) ? Redacted : ApplyTextRedactors(value)));
+                    SanitizeHeaderValue(pair.Key, value)));
             }
         }
     }
@@ -587,7 +599,7 @@ internal static class UriNormalizer
 {
     private static readonly char[] QuerySeparators = { '&' };
 
-    public static string Normalize(Uri? uri)
+    public static string Normalize(Uri? uri, HttpSanitizer sanitizer)
     {
         if (uri is null)
             throw new HookReplayMismatchException("The HTTP request has no URI.");
@@ -615,7 +627,7 @@ internal static class UriNormalizer
             string value = WebUtility.UrlDecode(equals < 0 ? string.Empty : part.Substring(equals + 1)) ?? string.Empty;
             string normalizedValue = HttpSanitizer.IsSensitiveName(name)
                 ? "[REDACTED]"
-                : value;
+                : sanitizer.ApplyTextRedactors(value);
             query.Add(new KeyValuePair<string, string>(name, normalizedValue));
         }
 
@@ -632,6 +644,15 @@ internal static class UriNormalizer
             builder.Append(WebUtility.UrlEncode(pair.Value));
         }
         return builder.ToString();
+    }
+
+    public static string NormalizePersisted(string value, HttpSanitizer sanitizer)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri))
+            throw new HookReplayMalformedCassetteException(
+                "Cassette property 'normalizedUri' must be an absolute URI.");
+
+        return Normalize(uri, sanitizer);
     }
 }
 
@@ -719,11 +740,16 @@ internal static class CassetteFile
 {
     private const long MaxCassetteBytes = 32L * 1024 * 1024;
 
+    public static void ValidatePath(string path)
+    {
+        _ = GetFullPath(path);
+    }
+
     public static bool Exists(string path)
     {
         try
         {
-            return File.Exists(Path.GetFullPath(path));
+            return File.Exists(GetFullPath(path));
         }
         catch
         {
@@ -734,6 +760,7 @@ internal static class CassetteFile
     public static async Task<IReadOnlyList<CassetteInteraction>> ReadAsync(
         string path,
         int supportedVersion,
+        HttpSanitizer sanitizer,
         CancellationToken cancellationToken)
     {
         string fullPath = GetFullPath(path);
@@ -762,7 +789,7 @@ internal static class CassetteFile
 
             var result = new List<CassetteInteraction>();
             foreach (JsonElement element in entries.EnumerateArray())
-                result.Add(ParseInteraction(element));
+                result.Add(ParseInteraction(element, sanitizer));
             return result;
         }
         catch (HookReplayException)
@@ -797,6 +824,7 @@ internal static class CassetteFile
         try
         {
             Directory.CreateDirectory(directory);
+            EnsureNoReparsePoints(fullPath);
             byte[] bytes = Serialize(schemaVersion, interactions);
             await Task.Run(() => File.WriteAllBytes(tempPath, bytes), cancellationToken)
                 .ConfigureAwait(false);
@@ -927,7 +955,9 @@ internal static class CassetteFile
         writer.WriteEndArray();
     }
 
-    private static CassetteInteraction ParseInteraction(JsonElement element)
+    private static CassetteInteraction ParseInteraction(
+        JsonElement element,
+        HttpSanitizer sanitizer)
     {
         JsonElement request = RequiredProperty(element, "request");
         JsonElement response = RequiredProperty(element, "response");
@@ -936,7 +966,9 @@ internal static class CassetteFile
             Request = new CassetteRequest
             {
                 Method = RequiredString(request, "method"),
-                NormalizedUri = RequiredString(request, "normalizedUri"),
+                NormalizedUri = UriNormalizer.NormalizePersisted(
+                    RequiredString(request, "normalizedUri"),
+                    sanitizer),
                 BodyFingerprint = OptionalString(request, "bodyFingerprint"),
                 Body = OptionalString(request, "body"),
                 BodyContentType = OptionalString(request, "bodyContentType"),
@@ -945,9 +977,9 @@ internal static class CassetteFile
             },
             Response = new CassetteResponse
             {
-                StatusCode = RequiredInt(response, "statusCode"),
+                StatusCode = ParseStatusCode(response),
                 ReasonPhrase = OptionalString(response, "reasonPhrase"),
-                Version = ParseVersion(OptionalString(response, "version")),
+                Version = ParseVersion(RequiredString(response, "version")),
                 Headers = ParseHeaders(response, "headers"),
                 BodyHeaders = ParseHeaders(response, "bodyHeaders"),
                 Body = ParseBody(response)
@@ -972,16 +1004,51 @@ internal static class CassetteFile
         JsonElement headers = RequiredProperty(parent, name);
         if (headers.ValueKind != JsonValueKind.Array)
             throw new HookReplayMalformedCassetteException("Cassette property '" + name + "' must be an array.");
-        return headers.EnumerateArray()
-            .Select(header => new CassetteHeader(
-                RequiredString(header, "name"),
-                RequiredString(header, "value")))
-            .ToList();
+        var result = new List<CassetteHeader>();
+        foreach (JsonElement header in headers.EnumerateArray())
+        {
+            string headerName = RequiredString(header, "name");
+            string headerValue = RequiredString(header, "value");
+            if (string.IsNullOrWhiteSpace(headerName) ||
+                headerName.IndexOf('\r') >= 0 ||
+                headerName.IndexOf('\n') >= 0 ||
+                headerValue.IndexOf('\r') >= 0 ||
+                headerValue.IndexOf('\n') >= 0)
+            {
+                throw new HookReplayMalformedCassetteException(
+                    "Cassette headers must contain valid names and values without line breaks.");
+            }
+
+            result.Add(new CassetteHeader(headerName, headerValue));
+        }
+
+        return result;
     }
 
-    private static Version ParseVersion(string? value)
+    private static Version ParseVersion(string value)
     {
-        return Version.TryParse(value, out Version? version) ? version : HttpVersion.Version11;
+        if (!Version.TryParse(value, out Version? version) ||
+            version is null ||
+            (version != new Version(1, 0) &&
+             version != new Version(1, 1) &&
+             version != new Version(2, 0) &&
+             version != new Version(3, 0)))
+        {
+            throw new HookReplayMalformedCassetteException(
+                "Cassette property 'version' must be a supported HTTP version (1.0, 1.1, 2.0, or 3.0).");
+        }
+
+        return version;
+    }
+
+    private static int ParseStatusCode(JsonElement response)
+    {
+        int statusCode = RequiredInt(response, "statusCode");
+        if (statusCode < 100 || statusCode > 599)
+            throw new HookReplayMalformedCassetteException(
+                "Cassette property 'statusCode' must be an ordinary HTTP status code from 100 through 599.");
+
+        return statusCode;
     }
 
     private static JsonElement RequiredProperty(JsonElement parent, string name)
@@ -1021,12 +1088,88 @@ internal static class CassetteFile
     {
         try
         {
-            return Path.GetFullPath(path);
+            if (string.IsNullOrWhiteSpace(path))
+                throw new HookReplayIOException(
+                    "The cassette path is invalid.",
+                    new ArgumentException("A cassette path is required.", nameof(path)));
+
+            if (ContainsParentTraversal(path))
+                throw new HookReplayIOException(
+                    "The cassette path must not contain parent-directory traversal.",
+                    new ArgumentException("Parent-directory traversal is not allowed.", nameof(path)));
+
+            string fullPath = Path.GetFullPath(path);
+            if (string.IsNullOrWhiteSpace(Path.GetFileName(fullPath)))
+                throw new HookReplayIOException(
+                    "The cassette path must name a file.",
+                    new ArgumentException("The cassette path must name a file.", nameof(path)));
+
+            EnsureNoReparsePoints(fullPath);
+            return fullPath;
+        }
+        catch (HookReplayException)
+        {
+            throw;
         }
         catch (Exception exception)
         {
             throw new HookReplayIOException("The cassette path is invalid.", exception);
         }
+    }
+
+    private static bool ContainsParentTraversal(string path)
+    {
+        char[] separators = Path.DirectorySeparatorChar == Path.AltDirectorySeparatorChar
+            ? new[] { Path.DirectorySeparatorChar }
+            : new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
+        return path.Split(separators, StringSplitOptions.RemoveEmptyEntries)
+            .Any(segment => string.Equals(segment, "..", StringComparison.Ordinal));
+    }
+
+    private static void EnsureNoReparsePoints(string fullPath)
+    {
+        RejectReparsePoint(fullPath);
+
+        string? directory = Path.GetDirectoryName(fullPath);
+        string root = Path.GetPathRoot(fullPath) ?? string.Empty;
+        while (!string.IsNullOrWhiteSpace(directory) && !SamePath(directory, root))
+        {
+            RejectReparsePoint(directory);
+            string? parent = Path.GetDirectoryName(directory);
+            if (parent is null || SamePath(parent, directory))
+                break;
+            directory = parent;
+        }
+    }
+
+    private static void RejectReparsePoint(string path)
+    {
+        FileAttributes attributes;
+        try
+        {
+            attributes = File.GetAttributes(path);
+        }
+        catch (FileNotFoundException)
+        {
+            return;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return;
+        }
+
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+            throw new HookReplayIOException(
+                "Cassette paths through symbolic links or reparse points are not supported.",
+                new IOException("The cassette path contains a reparse point."));
+    }
+
+    private static bool SamePath(string left, string right)
+    {
+        StringComparison comparison = Path.DirectorySeparatorChar == '\\'
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(left, right, comparison);
     }
 }
 

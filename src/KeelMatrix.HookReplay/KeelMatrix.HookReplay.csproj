@@ -12,6 +12,12 @@
     <RepositoryUrl>https://github.com/KeelMatrix/HookReplay</RepositoryUrl>
     <PackageProjectUrl>https://github.com/KeelMatrix/HookReplay#readme</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <DebugType>portable</DebugType>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <EnablePublicApiAnalyzers>true</EnablePublicApiAnalyzers>
   </PropertyGroup>

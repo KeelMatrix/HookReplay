@@ -82,13 +82,15 @@ Mismatch diagnostics describe the nearest difference (method, normalized URI, se
 
 Cassettes are HookReplay schema version 1 JSON. They are UTF-8 with a final LF, stable property order, sorted headers/query parameters, and no machine-specific paths. Unsupported future schema versions fail with HookReplayUnsupportedCassetteVersionException; malformed files fail with HookReplayMalformedCassetteException.
 
-Authorization, proxy authorization, cookies, set-cookie, API-key-like headers, sensitive query/form fields, and common secret properties in JSON bodies are structurally redacted. The package also applies the built-in KeelMatrix.Redaction protections. Add project-specific protection without touching cassette-writing stages:
+Authorization, proxy authorization, cookies, set-cookie, API-key-like headers, sensitive query/form fields, and common secret properties in JSON bodies are structurally redacted. The package also applies the built-in KeelMatrix.Redaction protections. Add project-specific protection without touching cassette-writing stages; configured redactors are applied to opaque URI query values, non-structural header values, and text/JSON/form body values before either matching data or cassette bytes are created:
 
 ~~~csharp
 options.Redactors.Add(new RegexReplaceRedactor("customer-[0-9]+", "[CUSTOMER]"));
 ~~~
 
 No unsanitized cassette bytes are written. A custom redactor must be deterministic and must not reintroduce protected values.
+
+Cassette paths may be relative or absolute, but parent-directory traversal and existing symbolic-link or reparse-point paths are rejected before cassette I/O. Replay never follows a network fallback.
 
 ## Supported content and limits
 

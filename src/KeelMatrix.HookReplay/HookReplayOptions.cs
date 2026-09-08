@@ -7,6 +7,9 @@ public sealed class HookReplayOptions
 {
     /// <summary>Initializes options for the specified cassette path.</summary>
     /// <param name="cassettePath">A relative or absolute path selected by the caller.</param>
+    /// <remarks>
+    /// Parent-directory traversal and existing symbolic-link or reparse-point paths are rejected when a handler is created.
+    /// </remarks>
     public HookReplayOptions(string cassettePath)
     {
         if (string.IsNullOrWhiteSpace(cassettePath))

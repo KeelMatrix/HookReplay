@@ -5,6 +5,9 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("KeelMatrix.HookReplay.Tests")]
 
 namespace KeelMatrix.HookReplay;
 
@@ -17,7 +20,7 @@ public sealed class HookReplayHandler : DelegatingHandler
     private const string Redacted = "[REDACTED]";
     private readonly HookReplayOptions options;
     private readonly SemaphoreSlim cassetteGate = new(1, 1);
-    private readonly Client telemetry = new("HookReplay", typeof(HookReplayHandler));
+    private readonly IHookReplayTelemetry telemetry;
     private readonly List<CassetteInteraction> interactions = new();
     private bool loaded;
     private bool disposed;
@@ -26,13 +29,32 @@ public sealed class HookReplayHandler : DelegatingHandler
     /// <param name="options">The record or replay configuration.</param>
     /// <param name="innerHandler">The transport used only in record mode.</param>
     public HookReplayHandler(HookReplayOptions options, HttpMessageHandler? innerHandler = null)
+        : this(options, innerHandler, CreateTelemetry(options))
+    {
+    }
+
+    internal HookReplayHandler(
+        HookReplayOptions options,
+        HttpMessageHandler? innerHandler,
+        IHookReplayTelemetry telemetry)
         : base(innerHandler ?? new HttpClientHandler())
     {
         this.options = options ?? throw new ArgumentNullException(nameof(options));
+        this.telemetry = telemetry ?? throw new ArgumentNullException(nameof(telemetry));
         if (!Enum.IsDefined(typeof(HookReplayMode), options.Mode))
             throw new ArgumentOutOfRangeException(nameof(options), "The HookReplay mode is not supported.");
         if (options.MaxBodyBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(options), "MaxBodyBytes must be greater than zero.");
+        CassetteFile.ValidatePath(options.CassettePath);
+    }
+
+    private static HookReplayTelemetry CreateTelemetry(HookReplayOptions options)
+    {
+        if (options is null)
+            throw new ArgumentNullException(nameof(options));
+
+        CassetteFile.ValidatePath(options.CassettePath);
+        return new HookReplayTelemetry();
     }
 
     /// <inheritdoc />
@@ -107,8 +129,7 @@ public sealed class HookReplayHandler : DelegatingHandler
                 " Replay never falls back to the network.");
         }
 
-        telemetry.TrackActivation();
-        telemetry.TrackHeartbeat();
+        TrackTelemetry();
         return ReplayResponse(request, selected.Response);
     }
 
@@ -155,9 +176,29 @@ public sealed class HookReplayHandler : DelegatingHandler
             throw;
         }
 
-        telemetry.TrackActivation();
-        telemetry.TrackHeartbeat();
+        TrackTelemetry();
         return response;
+    }
+
+    private void TrackTelemetry()
+    {
+        try
+        {
+            telemetry.TrackActivation();
+        }
+        catch
+        {
+            // Telemetry is best-effort and must never affect record or replay.
+        }
+
+        try
+        {
+            telemetry.TrackHeartbeat();
+        }
+        catch
+        {
+            // Telemetry is best-effort and must never affect record or replay.
+        }
     }
 
     private async Task EnsureLoadedAsync(CancellationToken cancellationToken)
@@ -175,6 +216,7 @@ public sealed class HookReplayHandler : DelegatingHandler
                 await CassetteFile.ReadAsync(
                     options.CassettePath,
                     CassetteSchemaVersion,
+                    new HttpSanitizer(options.Redactors),
                     cancellationToken).ConfigureAwait(false);
             interactions.AddRange(existing);
             loaded = true;
@@ -198,6 +240,7 @@ public sealed class HookReplayHandler : DelegatingHandler
                         await CassetteFile.ReadAsync(
                             options.CassettePath,
                             CassetteSchemaVersion,
+                            new HttpSanitizer(options.Redactors),
                             cancellationToken).ConfigureAwait(false);
                     interactions.AddRange(existing);
                 }
@@ -317,4 +360,50 @@ internal sealed class CassetteBody
 {
     public string ContentType { get; set; } = "text/plain; charset=utf-8";
     public string Text { get; set; } = string.Empty;
+}
+
+internal interface IHookReplayTelemetry
+{
+    void TrackActivation();
+
+    void TrackHeartbeat();
+}
+
+internal sealed class HookReplayTelemetry : IHookReplayTelemetry
+{
+    private readonly Client? client;
+
+    public HookReplayTelemetry()
+    {
+        try
+        {
+            client = new Client("HookReplay", typeof(HookReplayHandler));
+        }
+        catch
+        {
+            client = null;
+        }
+    }
+
+    public void TrackActivation()
+    {
+        try
+        {
+            client?.TrackActivation();
+        }
+        catch
+        {
+        }
+    }
+
+    public void TrackHeartbeat()
+    {
+        try
+        {
+            client?.TrackHeartbeat();
+        }
+        catch
+        {
+        }
+    }
 }
