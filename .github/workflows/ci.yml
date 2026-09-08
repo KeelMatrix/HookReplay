@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  KEELMATRIX_NO_TELEMETRY: "1"
+
+jobs:
+  validate:
+    name: Validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Restore
+        run: dotnet restore KeelMatrix.HookReplay.sln
+
+      - name: Build shipping project for net8.0
+        run: dotnet build src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj --configuration Release --no-restore --framework net8.0
+
+      - name: Build shipping project for netstandard2.0
+        run: dotnet build src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj --configuration Release --no-restore --framework netstandard2.0
+
+      - name: Build tests
+        run: dotnet build tests/KeelMatrix.HookReplay.Tests/KeelMatrix.HookReplay.Tests.csproj --configuration Release --no-restore
+
+      - name: Test
+        env:
+          KEELMATRIX_NO_TELEMETRY: "1"
+        run: dotnet test KeelMatrix.HookReplay.sln --configuration Release --no-build
+
+      - name: Verify cassette determinism
+        env:
+          KEELMATRIX_NO_TELEMETRY: "1"
+        run: >
+          dotnet test tests/KeelMatrix.HookReplay.Tests/KeelMatrix.HookReplay.Tests.csproj
+          --configuration Release
+          --no-build
+          --filter "FullyQualifiedName~Cassette_is_deterministic_and_does_not_persist_secrets"
+
+      - name: Verify formatting and analyzers
+        run: dotnet format KeelMatrix.HookReplay.sln --verify-no-changes
+
+      - name: Check for vulnerable dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: dotnet list KeelMatrix.HookReplay.sln package --vulnerable --include-transitive
+
+      - name: Pack
+        run: >
+          dotnet pack src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj
+          --configuration Release
+          --no-build
+          --include-symbols
+          --output ./artifacts/packages
+
+      - name: Inspect package artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageDirectory = Join-Path (Get-Location).Path "artifacts/packages"
+          $packages = @(Get-ChildItem -LiteralPath $packageDirectory -Filter "*.nupkg" -File)
+          $symbols = @(Get-ChildItem -LiteralPath $packageDirectory -Filter "*.snupkg" -File)
+
+          if ($packages.Count -ne 1 -or $packages[0].Name -ne "KeelMatrix.HookReplay.0.1.0.nupkg") {
+              throw "Expected exactly KeelMatrix.HookReplay.0.1.0.nupkg."
+          }
+          if ($symbols.Count -ne 1 -or $symbols[0].Name -ne "KeelMatrix.HookReplay.0.1.0.snupkg") {
+              throw "Expected exactly KeelMatrix.HookReplay.0.1.0.snupkg."
+          }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($packages[0].FullName)
+          try {
+              $entryNames = @($archive.Entries | ForEach-Object { $_.FullName })
+              if ($entryNames -notcontains "README.md" -or $entryNames -notcontains "LICENSE") {
+                  throw "Package is missing README.md or LICENSE."
+              }
+              if ($entryNames | Where-Object { $_ -match "(^|/)(\.env|\.env\.local|keelmatrix\.telemetry\.json)$" }) {
+                  throw "Package contains a sensitive configuration file."
+              }
+          }
+          finally {
+              $archive.Dispose()
+          }
+
+          @(
+              "### Package artifacts"
+              "- KeelMatrix.HookReplay.0.1.0.nupkg"
+              "- KeelMatrix.HookReplay.0.1.0.snupkg"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Run package consumer smoke
+        env:
+          KEELMATRIX_NO_TELEMETRY: "1"
+        shell: pwsh
+        run: >
+          pwsh -NoProfile -File tests/RunPackageConsumerSmoke.ps1
+          -PackagePath ./artifacts/packages/KeelMatrix.HookReplay.0.1.0.nupkg
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-${{ matrix.os }}
+          path: ./artifacts/packages
+          if-no-files-found: error
