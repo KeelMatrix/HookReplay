@@ -2,7 +2,7 @@
 param(
     [string] $PackageDirectory = (Join-Path $PSScriptRoot "..\artifacts\packages"),
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [ValidatePattern('^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$')]
     [string] $Version,
     [string] $ExpectedCommit = ""
 )

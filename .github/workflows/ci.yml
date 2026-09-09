@@ -46,6 +46,10 @@ jobs:
           }
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
+      - name: Verify release version and workflow contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyReleaseVersionContract.ps1
+
       - name: Configure macOS temporary directory
         if: runner.os == 'macOS'
         shell: bash

@@ -29,8 +29,10 @@ jobs:
       - name: Validate release tag
         id: release-version
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $version = (& pwsh -NoProfile -File scripts/GetReleaseVersion.ps1 -Tag "${{ github.ref_name }}" | Out-String).Trim()
+          $version = (& pwsh -NoProfile -File scripts/GetReleaseVersion.ps1 -Tag $env:RELEASE_TAG | Out-String).Trim()
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
             throw "Could not derive a release version from the tag."
           }
