@@ -36,6 +36,16 @@ jobs:
         with:
           dotnet-version: 10.0.400
 
+      - name: Derive package version
+        id: package-version
+        shell: pwsh
+        run: |
+          $version = (& pwsh -NoProfile -File scripts/GetReleaseVersion.ps1 -Tag v0.1.0 | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
+            throw "Could not derive the CI package version."
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Configure macOS temporary directory
         if: runner.os == 'macOS'
         shell: bash
@@ -48,18 +58,18 @@ jobs:
         run: dotnet restore KeelMatrix.HookReplay.sln --configfile NuGet.config
 
       - name: Build shipping project for net8.0
-        run: dotnet build src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj --configuration Release --no-restore --framework net8.0
+        run: dotnet build src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj --configuration Release --no-restore --framework net8.0 -p:Version=${{ steps.package-version.outputs.version }}
 
       - name: Build shipping project for netstandard2.0
-        run: dotnet build src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj --configuration Release --no-restore --framework netstandard2.0
+        run: dotnet build src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj --configuration Release --no-restore --framework netstandard2.0 -p:Version=${{ steps.package-version.outputs.version }}
 
       - name: Build tests
-        run: dotnet build tests/KeelMatrix.HookReplay.Tests/KeelMatrix.HookReplay.Tests.csproj --configuration Release --no-restore
+        run: dotnet build tests/KeelMatrix.HookReplay.Tests/KeelMatrix.HookReplay.Tests.csproj --configuration Release --no-restore -p:Version=${{ steps.package-version.outputs.version }}
 
       - name: Test
         env:
           KEELMATRIX_NO_TELEMETRY: "1"
-        run: dotnet test KeelMatrix.HookReplay.sln --configuration Release --no-build
+        run: dotnet test KeelMatrix.HookReplay.sln --configuration Release --no-build -p:Version=${{ steps.package-version.outputs.version }}
 
       - name: Verify cassette determinism
         env:
@@ -68,6 +78,7 @@ jobs:
           dotnet test tests/KeelMatrix.HookReplay.Tests/KeelMatrix.HookReplay.Tests.csproj
           --configuration Release
           --no-build
+          -p:Version=${{ steps.package-version.outputs.version }}
           --filter "FullyQualifiedName~Cassette_is_deterministic_and_does_not_persist_secrets"
 
       # Keep one canonical format gate because checkout line endings differ by platform.
@@ -77,7 +88,8 @@ jobs:
 
       - name: Check for vulnerable dependencies
         if: matrix.os == 'ubuntu-latest'
-        run: dotnet list KeelMatrix.HookReplay.sln package --vulnerable --include-transitive
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/CheckVulnerabilities.ps1 -SolutionPath KeelMatrix.HookReplay.sln -NuGetConfig NuGet.config
 
       - name: Pack
         run: >
@@ -85,19 +97,19 @@ jobs:
           --configuration Release
           --no-build
           --include-symbols
+          -p:SymbolPackageFormat=snupkg
+          -p:Version=${{ steps.package-version.outputs.version }}
           --output ./artifacts/packages
 
       - name: Inspect package artifacts
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/InspectPackage.ps1 -PackageDirectory ./artifacts/packages -Version 0.1.0 -ExpectedCommit "${{ github.sha }}"
+        run: pwsh -NoProfile -File scripts/InspectPackage.ps1 -PackageDirectory ./artifacts/packages -Version ${{ steps.package-version.outputs.version }} -ExpectedCommit "${{ github.sha }}"
 
       - name: Run package consumer smoke
         env:
           KEELMATRIX_NO_TELEMETRY: "1"
         shell: pwsh
-        run: >
-          pwsh -NoProfile -File tests/RunPackageConsumerSmoke.ps1
-          -PackagePath ./artifacts/packages/KeelMatrix.HookReplay.0.1.0.nupkg
+        run: pwsh -NoProfile -File tests/RunPackageConsumerSmoke.ps1
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v7

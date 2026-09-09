@@ -1,9 +1,12 @@
 <Project>
   <PropertyGroup>
-    <Version>0.1.0</Version>
-    <PackageVersion>$(Version)</PackageVersion>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
-    <FileVersion>0.1.0.0</FileVersion>
+    <!-- Version is the single release input. Release workflows override it from the validated tag. -->
+    <Version Condition="'$(Version)'==''">0.1.0</Version>
+    <PackageVersion Condition="'$(PackageVersion)'==''">$(Version)</PackageVersion>
+    <AssemblyVersion Condition="'$(AssemblyVersion)'==''">$(Version).0</AssemblyVersion>
+    <FileVersion Condition="'$(FileVersion)'==''">$(Version).0</FileVersion>
+    <InformationalVersion Condition="'$(InformationalVersion)'==''">$(Version)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

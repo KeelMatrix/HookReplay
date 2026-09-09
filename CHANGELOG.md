@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+- Sanitize response reason phrases before cassette persistence and keep release metadata aligned with the validated package version.
+
 ## [0.1.0]
 
 Initial package contents for the first release candidate. This entry describes the planned `0.1.0` package; it does not indicate that the package has been published.

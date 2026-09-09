@@ -93,6 +93,56 @@ public sealed class HookReplayBehaviorTests
     }
 
     [Fact]
+    public async Task Response_reason_phrase_is_sanitized_before_persistence_and_replay()
+    {
+        string cassette = NewCassettePath();
+        const string rawReasonPhrase = "Bearer reason-secret-token";
+        var options = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Record
+        };
+        options.Redactors.Add(new SentinelRedactor(rawReasonPhrase, "[CUSTOM]"));
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                options,
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    ReasonPhrase = rawReasonPhrase,
+                    Content = new StringContent("safe")
+                }))))
+            {
+                using HttpResponseMessage response = await recorder.GetAsync(
+                    "https://example.test/reason-phrase");
+                Assert.Equal(rawReasonPhrase, response.ReasonPhrase);
+            }
+
+            string cassetteText = await File.ReadAllTextAsync(cassette);
+            Assert.DoesNotContain(rawReasonPhrase, cassetteText, StringComparison.Ordinal);
+            Assert.Contains("[CUSTOM]", cassetteText, StringComparison.Ordinal);
+
+            var replayOptions = new HookReplayOptions(cassette)
+            {
+                Mode = HookReplayMode.Replay
+            };
+            replayOptions.Redactors.Add(new SentinelRedactor(rawReasonPhrase, "[CUSTOM]"));
+            using var replay = new HttpClient(new HookReplayHandler(
+                replayOptions,
+                new ThrowingHandler()));
+            using HttpResponseMessage replayed = await replay.GetAsync(
+                "https://example.test/reason-phrase");
+
+            Assert.Equal("[CUSTOM]", replayed.ReasonPhrase);
+            Assert.Equal("safe", await replayed.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
     public async Task Shipped_schema_v1_fixture_replays_without_rewriting_the_fixture()
     {
         string fixture = Path.Combine(

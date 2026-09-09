@@ -1,11 +1,24 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string] $PackagePath = (Join-Path $PSScriptRoot "..\artifacts\packages\KeelMatrix.HookReplay.0.1.0.nupkg")
+    [string] $PackagePath = ""
 )
 
 $ErrorActionPreference = "Stop"
+if ([string]::IsNullOrWhiteSpace($PackagePath)) {
+    $candidates = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot "..\artifacts\packages") -Filter "KeelMatrix.HookReplay.*.nupkg" -File)
+    if ($candidates.Count -ne 1) {
+        throw "Expected exactly one HookReplay package when PackagePath is omitted."
+    }
+    $PackagePath = $candidates[0].FullName
+}
+
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
+$packageName = [System.IO.Path]::GetFileNameWithoutExtension($package)
+if ($packageName -notmatch '^KeelMatrix\.HookReplay\.(?<version>\d+\.\d+\.\d+)$') {
+    throw "PackagePath must name a KeelMatrix.HookReplay vX.Y.Z package."
+}
+$packageVersion = $Matches.version
 $packageDirectory = Split-Path -Parent $package
 $consumerSource = Join-Path $PSScriptRoot "PackageConsumerSmoke"
 $consumerRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("hookreplay-consumer-" + [Guid]::NewGuid().ToString("N"))
@@ -45,13 +58,13 @@ try {
         $nugetConfig,
         $configContents,
         [System.Text.UTF8Encoding]::new($false))
-    & dotnet restore $project --configfile $nugetConfig --force-evaluate --no-cache
+    & dotnet restore $project --configfile $nugetConfig --force-evaluate --no-cache -p:HookReplayPackageVersion=$packageVersion
     if ($LASTEXITCODE -ne 0) {
         throw "Package consumer restore failed with exit code $LASTEXITCODE."
     }
 
     $env:KEELMATRIX_NO_TELEMETRY = "1"
-    & dotnet run --project $project -c Release --no-restore
+    & dotnet run --project $project -c Release --no-restore -p:HookReplayPackageVersion=$packageVersion
     if ($LASTEXITCODE -ne 0) {
         throw "Package consumer smoke failed with exit code $LASTEXITCODE."
     }

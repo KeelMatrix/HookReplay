@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string] $PackageDirectory = (Join-Path $PSScriptRoot "..\artifacts\packages"),
-    [string] $Version = "0.1.0",
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [string] $Version,
     [string] $ExpectedCommit = ""
 )
 
@@ -69,6 +71,27 @@ function Get-EntryBytes($Archive, [string] $Name) {
     }
 }
 
+function Assert-AssemblyMetadata($Archive, [string] $Name, [string] $TargetFramework) {
+    $temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("hookreplay-package-inspection-" + [Guid]::NewGuid().ToString("N"))
+    $temporaryPath = Join-Path $temporaryDirectory ([System.IO.Path]::GetFileName($Name))
+    try {
+        New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
+        [System.IO.File]::WriteAllBytes($temporaryPath, (Get-EntryBytes $Archive $Name))
+
+        $assemblyName = [System.Reflection.AssemblyName]::GetAssemblyName($temporaryPath)
+        $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($temporaryPath)
+
+        Assert-Equal "$Version.0" $assemblyName.Version.ToString() "Assembly version mismatch for $TargetFramework."
+        Assert-Equal "$Version.0" $fileVersion.FileVersion "File version mismatch for $TargetFramework."
+        Assert-Equal $Version $fileVersion.ProductVersion "Informational version mismatch for $TargetFramework."
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryDirectory) {
+            Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force
+        }
+    }
+}
+
 function Assert-ExactDependencies($Group, [string[]] $Expected) {
     $actual = @($Group.SelectNodes("n:dependency", $script:Namespace) | ForEach-Object {
         "$($_.id)|$($_.version)|$($_.exclude)"
@@ -110,6 +133,9 @@ try {
     )) {
         Assert-Contains $packageEntries $required
     }
+
+    Assert-AssemblyMetadata $packageArchive "lib/net8.0/$packageId.dll" "net8.0"
+    Assert-AssemblyMetadata $packageArchive "lib/netstandard2.0/$packageId.dll" "netstandard2.0"
 
     foreach ($entry in $packageEntries) {
         if ($entry -match "(?i)(^|/)(src|tests|research|internal|\.github|\.git)(/|$)|(^|/)(\.env[^/]*|local\.settings\.json|appsettings\.(development|local)\.json|keelmatrix\.telemetry\.json|.*\.(secret|secrets)\.json|.*\.(pfx|p12|pem|key|crt|cer))$") {

@@ -28,23 +28,26 @@ jobs:
 
       - name: Validate release tag
         id: release-version
-        shell: bash
+        shell: pwsh
         run: |
-          tag="${GITHUB_REF_NAME}"
-          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "Malformed release tag '$tag'. Expected vX.Y.Z." >&2
-            exit 1
-          fi
-          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          $version = (& pwsh -NoProfile -File scripts/GetReleaseVersion.ps1 -Tag "${{ github.ref_name }}" | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
+            throw "Could not derive a release version from the tag."
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Restore from nuget.org
         run: dotnet restore KeelMatrix.HookReplay.sln --configfile NuGet.config --no-cache --force
 
+      - name: Check for vulnerable dependencies
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/CheckVulnerabilities.ps1 -SolutionPath KeelMatrix.HookReplay.sln -NuGetConfig NuGet.config
+
       - name: Build Release
-        run: dotnet build KeelMatrix.HookReplay.sln --configuration Release --no-restore
+        run: dotnet build KeelMatrix.HookReplay.sln --configuration Release --no-restore -p:Version=${{ steps.release-version.outputs.version }}
 
       - name: Test Release
-        run: dotnet test KeelMatrix.HookReplay.sln --configuration Release --no-build
+        run: dotnet test KeelMatrix.HookReplay.sln --configuration Release --no-build -p:Version=${{ steps.release-version.outputs.version }}
 
       - name: Pack expected artifacts
         run: >
@@ -52,7 +55,7 @@ jobs:
           --configuration Release
           --no-build
           --include-symbols
-          --p:SymbolPackageFormat=snupkg
+          -p:SymbolPackageFormat=snupkg
           -p:Version=${{ steps.release-version.outputs.version }}
           --output ./artifacts/packages
 

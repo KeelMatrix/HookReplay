@@ -122,7 +122,9 @@ internal sealed class ResponseCapture
         return new CassetteResponse
         {
             StatusCode = (int)response.StatusCode,
-            ReasonPhrase = response.ReasonPhrase,
+            ReasonPhrase = response.ReasonPhrase is null
+                ? null
+                : sanitizer.ApplyTextRedactors(response.ReasonPhrase),
             Version = response.Version,
             Headers = responseHeaders,
             BodyHeaders = bodyHeaders,

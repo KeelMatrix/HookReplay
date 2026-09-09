@@ -7,6 +7,6 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="KeelMatrix.HookReplay" Version="0.1.0" />
+    <PackageReference Include="KeelMatrix.HookReplay" Version="$(HookReplayPackageVersion)" />
   </ItemGroup>
 </Project>

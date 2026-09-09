@@ -14,7 +14,7 @@
 - Release build: dotnet build KeelMatrix.HookReplay.sln -c Release --no-restore
 - Tests: dotnet test KeelMatrix.HookReplay.sln -c Release --no-build
 - Package: dotnet pack src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj -c Release --no-build --include-symbols --output artifacts/packages
-- Vulnerability check: dotnet list KeelMatrix.HookReplay.sln package --vulnerable --include-transitive
+- Vulnerability check: `pwsh -NoProfile -File scripts/CheckVulnerabilities.ps1` (audits direct and transitive packages and fails closed)
 - Local tests: `dotnet test KeelMatrix.HookReplay.sln -c Release` (the test assembly enforces non-production telemetry suppression)
 - Package-consumer smoke: `pwsh -NoProfile -File tests/RunPackageConsumerSmoke.ps1`
 
