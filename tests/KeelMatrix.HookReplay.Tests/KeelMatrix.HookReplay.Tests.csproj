@@ -17,4 +17,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Fixtures\schema-v1-basic.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

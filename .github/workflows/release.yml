@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  KEELMATRIX_NO_TELEMETRY: "1"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Validate release tag
+        id: release-version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Malformed release tag '$tag'. Expected vX.Y.Z." >&2
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore from nuget.org
+        run: dotnet restore KeelMatrix.HookReplay.sln --configfile NuGet.config --no-cache --force
+
+      - name: Build Release
+        run: dotnet build KeelMatrix.HookReplay.sln --configuration Release --no-restore
+
+      - name: Test Release
+        run: dotnet test KeelMatrix.HookReplay.sln --configuration Release --no-build
+
+      - name: Pack expected artifacts
+        run: >
+          dotnet pack src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj
+          --configuration Release
+          --no-build
+          --include-symbols
+          --p:SymbolPackageFormat=snupkg
+          -p:Version=${{ steps.release-version.outputs.version }}
+          --output ./artifacts/packages
+
+      - name: Inspect package artifacts before publication
+        shell: pwsh
+        run: >
+          pwsh -NoProfile -File scripts/InspectPackage.ps1
+          -PackageDirectory ./artifacts/packages
+          -Version ${{ steps.release-version.outputs.version }}
+          -ExpectedCommit "${{ github.sha }}"
+
+      - name: Authenticate to NuGet.org
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: dmitriyzen
+
+      - name: Publish the expected package
+        run: >
+          dotnet nuget push
+          ./artifacts/packages/KeelMatrix.HookReplay.${{ steps.release-version.outputs.version }}.nupkg
+          --source https://api.nuget.org/v3/index.json
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+
+      - name: Publish the expected symbol package
+        run: >
+          dotnet nuget push
+          ./artifacts/packages/KeelMatrix.HookReplay.${{ steps.release-version.outputs.version }}.snupkg
+          --source https://api.nuget.org/v3/index.json
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"

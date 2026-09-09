@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "normalizedUri": "https://example.test/v1/items?sort=asc",
+        "bodyFingerprint": null,
+        "bodyContentType": null,
+        "body": null,
+        "headers": [],
+        "matchHeaders": []
+      },
+      "response": {
+        "statusCode": 200,
+        "reasonPhrase": "OK",
+        "version": "1.1",
+        "headers": [],
+        "bodyHeaders": [
+          {
+            "name": "Content-Type",
+            "value": "application/json; charset=utf-8"
+          }
+        ],
+        "body": {
+          "contentType": "application/json; charset=utf-8",
+          "text": "{\"items\":[{\"id\":1,\"name\":\"synthetic\"}]}"
+        }
+      }
+    }
+  ]
+}

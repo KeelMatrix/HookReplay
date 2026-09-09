@@ -1,4 +1,5 @@
 ﻿using System.Net;
+using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -89,6 +90,179 @@ public sealed class HookReplayBehaviorTests
 
         DeleteCassette(first);
         DeleteCassette(second);
+    }
+
+    [Fact]
+    public async Task Shipped_schema_v1_fixture_replays_without_rewriting_the_fixture()
+    {
+        string fixture = Path.Combine(
+            AppContext.BaseDirectory,
+            "Fixtures",
+            "schema-v1-basic.json");
+        byte[] before = await File.ReadAllBytesAsync(fixture);
+        var options = new HookReplayOptions(fixture);
+        var throwing = new ThrowingHandler();
+
+        using (var client = new HttpClient(new HookReplayHandler(options, throwing)))
+        using (HttpResponseMessage response = await client.GetAsync(
+            "https://EXAMPLE.test/v1/items?sort=asc"))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(
+                "{\"items\":[{\"id\":1,\"name\":\"synthetic\"}]}",
+                await response.Content.ReadAsStringAsync());
+        }
+
+        Assert.Equal(0, throwing.Calls);
+        Assert.Equal(before, await File.ReadAllBytesAsync(fixture));
+    }
+
+    [Fact]
+    public async Task Concurrent_distinguishable_replay_requests_consume_distinct_interactions()
+    {
+        string cassette = NewCassettePath();
+        string[] variants = { "red", "blue", "green", "yellow", "purple", "orange" };
+        var recordOptions = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Record
+        };
+        recordOptions.MatchHeaders.Add("x-variant");
+        using (var recorder = new HttpClient(new HookReplayHandler(
+            recordOptions,
+            new ResponseHandler(request =>
+            {
+                string variant = request.Headers.GetValues("x-variant").Single();
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(variant)
+                };
+            }))))
+        {
+            await Task.WhenAll(variants.Select(async variant =>
+            {
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    "https://example.test/concurrent");
+                request.Headers.Add("x-variant", variant);
+                using HttpResponseMessage response = await recorder.SendAsync(request);
+                Assert.Equal(variant, await response.Content.ReadAsStringAsync());
+            }));
+        }
+
+        var replayOptions = new HookReplayOptions(cassette);
+        replayOptions.MatchHeaders.Add("x-variant");
+        var throwing = new ThrowingHandler();
+        using (var replay = new HttpClient(new HookReplayHandler(replayOptions, throwing)))
+        {
+            string[] results = await Task.WhenAll(variants.Select(async variant =>
+            {
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    "https://example.test/concurrent");
+                request.Headers.Add("x-variant", variant);
+                using HttpResponseMessage response = await replay.SendAsync(request);
+                return await response.Content.ReadAsStringAsync();
+            }));
+
+            Assert.Equal(variants.OrderBy(value => value), results.OrderBy(value => value));
+        }
+
+        Assert.Equal(0, throwing.Calls);
+        DeleteCassette(cassette);
+    }
+
+    [Fact]
+    public async Task Concurrent_recording_preserves_every_distinguishable_interaction()
+    {
+        string cassette = NewCassettePath();
+        string[] paths = Enumerable.Range(1, 12)
+            .Select(value => "/items/" + value.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            .ToArray();
+        using (var recorder = new HttpClient(new HookReplayHandler(
+            new HookReplayOptions(cassette)
+            {
+                Mode = HookReplayMode.Record
+            },
+            new ResponseHandler(request => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(request.RequestUri!.AbsolutePath)
+            }))))
+        {
+            string[] results = await Task.WhenAll(paths.Select(async path =>
+            {
+                using HttpResponseMessage response = await recorder.GetAsync(
+                    "https://example.test" + path);
+                return await response.Content.ReadAsStringAsync();
+            }));
+
+            Assert.Equal(paths.OrderBy(value => value), results.OrderBy(value => value));
+        }
+
+        string cassetteText = await File.ReadAllTextAsync(cassette);
+        Assert.Equal(
+            paths.Length,
+            cassetteText.Split("\"normalizedUri\"", StringSplitOptions.None).Length - 1);
+
+        var throwing = new ThrowingHandler();
+        using (var replay = new HttpClient(new HookReplayHandler(
+            new HookReplayOptions(cassette),
+            throwing)))
+        {
+            await Task.WhenAll(paths.Select(async path =>
+            {
+                using HttpResponseMessage response = await replay.GetAsync(
+                    "https://example.test" + path);
+                Assert.Equal(path, await response.Content.ReadAsStringAsync());
+            }));
+        }
+
+        Assert.Equal(0, throwing.Calls);
+        DeleteCassette(cassette);
+    }
+
+    [Fact]
+    public async Task Concurrent_indistinguishable_requests_have_one_success_and_explicit_misses()
+    {
+        string cassette = NewCassettePath();
+        var recordOptions = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Record
+        };
+        using (var recorder = new HttpClient(new HookReplayHandler(
+            recordOptions,
+            new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("one")
+            }))))
+        {
+            using HttpResponseMessage response = await recorder.GetAsync("https://example.test/one");
+            Assert.Equal("one", await response.Content.ReadAsStringAsync());
+        }
+
+        var outcomes = new ConcurrentBag<bool>();
+        var throwing = new ThrowingHandler();
+        using (var replay = new HttpClient(new HookReplayHandler(
+            new HookReplayOptions(cassette),
+            throwing)))
+        {
+            await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+            {
+                try
+                {
+                    using HttpResponseMessage response = await replay.GetAsync("https://example.test/one");
+                    outcomes.Add(await response.Content.ReadAsStringAsync() == "one");
+                }
+                catch (HookReplayMismatchException)
+                {
+                    outcomes.Add(false);
+                }
+            }));
+        }
+
+        Assert.Equal(1, outcomes.Count(value => value));
+        Assert.Equal(7, outcomes.Count(value => !value));
+        Assert.Equal(0, throwing.Calls);
+        DeleteCassette(cassette);
     }
 
     [Fact]

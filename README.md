@@ -85,6 +85,8 @@ Cassettes are HookReplay schema version 1 JSON. They are UTF-8 with a final LF, 
 Authorization, proxy authorization, cookies, set-cookie, API-key-like headers, sensitive query/form fields, and common secret properties in JSON bodies are structurally redacted. The package also applies the built-in KeelMatrix.Redaction protections. Add project-specific protection without touching cassette-writing stages; configured redactors are applied to opaque URI query values, non-structural header values, and text/JSON/form body values before either matching data or cassette bytes are created:
 
 ~~~csharp
+using KeelMatrix.Redaction;
+
 options.Redactors.Add(new RegexReplaceRedactor("customer-[0-9]+", "[CUSTOMER]"));
 ~~~
 
@@ -106,9 +108,19 @@ Oversized or unsupported content fails clearly with HookReplaySizeLimitException
 
 After a successful persisted record or replay, HookReplay requests the minimal shared telemetry activation and weekly heartbeat events. Payloads do not contain URLs, hosts, methods, bodies, cassette names or paths, headers, cookies, tokens, query parameters, counts, fingerprints, mismatch details, repository names, or source paths. Telemetry is best effort and cannot break record/replay. Set KEELMATRIX_NO_TELEMETRY=1, DO_NOT_TRACK=1, or use the shared repository opt-out file to disable it.
 
-## Compatibility
+## Compatibility and policies
 
-The package targets net8.0 and netstandard2.0. Cross-platform release claims should be made only from recorded validation evidence for each platform.
+The package targets `net8.0` and `netstandard2.0`. The CI matrix validates Windows, Linux, and macOS for these shipping assets and the test suite includes cassette determinism and offline replay checks.
+
+See the [cassette compatibility policy](https://github.com/KeelMatrix/HookReplay/blob/main/docs/CASSETTE_COMPATIBILITY.md), [privacy policy](https://github.com/KeelMatrix/HookReplay/blob/main/PRIVACY.md), and [security policy](https://github.com/KeelMatrix/HookReplay/blob/main/SECURITY.md) for the durable contracts and reporting channels.
+
+## Troubleshooting
+
+- **Cassette miss:** confirm the method, canonical URI/query, body, and any selected matching headers are the same. Replay never calls the network to fill a miss.
+- **Malformed or unsupported cassette:** check `schemaVersion`, required fields, valid JSON/content types, and the [compatibility policy](docs/CASSETTE_COMPATIBILITY.md). Future schema versions are rejected instead of partially read.
+- **Unsupported or oversized content:** use empty, text, JSON, or URL-form content within `MaxBodyBytes`; streaming, multipart, and binary content are intentionally rejected.
+- **Unsafe cassette path:** choose a file path without parent-directory traversal and without symbolic-link or reparse-point components.
+- **Telemetry opt-out:** set `KEELMATRIX_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or use the shared telemetry repository opt-out file.
 
 ## License
 

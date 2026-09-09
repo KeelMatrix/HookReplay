@@ -45,7 +45,7 @@ jobs:
           echo "TMPDIR=$temp_directory/" >> "$GITHUB_ENV"
 
       - name: Restore
-        run: dotnet restore KeelMatrix.HookReplay.sln
+        run: dotnet restore KeelMatrix.HookReplay.sln --configfile NuGet.config
 
       - name: Build shipping project for net8.0
         run: dotnet build src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj --configuration Release --no-restore --framework net8.0
@@ -89,39 +89,7 @@ jobs:
 
       - name: Inspect package artifacts
         shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $packageDirectory = Join-Path (Get-Location).Path "artifacts/packages"
-          $packages = @(Get-ChildItem -LiteralPath $packageDirectory -Filter "*.nupkg" -File)
-          $symbols = @(Get-ChildItem -LiteralPath $packageDirectory -Filter "*.snupkg" -File)
-
-          if ($packages.Count -ne 1 -or $packages[0].Name -ne "KeelMatrix.HookReplay.0.1.0.nupkg") {
-              throw "Expected exactly KeelMatrix.HookReplay.0.1.0.nupkg."
-          }
-          if ($symbols.Count -ne 1 -or $symbols[0].Name -ne "KeelMatrix.HookReplay.0.1.0.snupkg") {
-              throw "Expected exactly KeelMatrix.HookReplay.0.1.0.snupkg."
-          }
-
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $archive = [System.IO.Compression.ZipFile]::OpenRead($packages[0].FullName)
-          try {
-              $entryNames = @($archive.Entries | ForEach-Object { $_.FullName })
-              if ($entryNames -notcontains "README.md" -or $entryNames -notcontains "LICENSE") {
-                  throw "Package is missing README.md or LICENSE."
-              }
-              if ($entryNames | Where-Object { $_ -match "(^|/)(\.env|\.env\.local|keelmatrix\.telemetry\.json)$" }) {
-                  throw "Package contains a sensitive configuration file."
-              }
-          }
-          finally {
-              $archive.Dispose()
-          }
-
-          @(
-              "### Package artifacts"
-              "- KeelMatrix.HookReplay.0.1.0.nupkg"
-              "- KeelMatrix.HookReplay.0.1.0.snupkg"
-          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+        run: pwsh -NoProfile -File scripts/InspectPackage.ps1 -PackageDirectory ./artifacts/packages -Version 0.1.0 -ExpectedCommit "${{ github.sha }}"
 
       - name: Run package consumer smoke
         env:

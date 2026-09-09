@@ -28,6 +28,17 @@ try {
     <add key="local" value="$packageDirectory" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
   </packageSources>
+  <packageSourceMapping>
+    <packageSource key="local">
+      <package pattern="KeelMatrix.HookReplay" />
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="KeelMatrix.Redaction" />
+      <package pattern="KeelMatrix.Telemetry" />
+      <package pattern="System.*" />
+      <package pattern="Microsoft.*" />
+    </packageSource>
+  </packageSourceMapping>
 </configuration>
 "@
     [System.IO.File]::WriteAllText(
