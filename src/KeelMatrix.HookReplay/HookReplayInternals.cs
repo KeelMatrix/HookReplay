@@ -443,10 +443,10 @@ internal sealed class HttpSanitizer
             {
                 sanitized = redactor.Redact(sanitized);
             }
-            catch (Exception exception)
+            catch (Exception)
             {
                 throw new HookReplayUnsupportedContentException(
-                    "A configured redactor failed; no cassette was written.", exception);
+                    "A configured redactor failed; no cassette was written.");
             }
         }
 

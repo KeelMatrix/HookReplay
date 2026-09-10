@@ -896,6 +896,40 @@ public sealed class HookReplayBehaviorTests
     }
 
     [Fact]
+    public async Task Sanitizer_failure_does_not_expose_input_in_exception_diagnostics()
+    {
+        string cassette = NewCassettePath();
+        const string rawSecret = "reason-phrase-secret-token";
+        var options = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Record
+        };
+        options.Redactors.Add(new LeakingThrowingRedactor(rawSecret));
+
+        try
+        {
+            using var client = new HttpClient(new HookReplayHandler(
+                options,
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    ReasonPhrase = rawSecret
+                })));
+
+            HookReplayUnsupportedContentException exception =
+                await Assert.ThrowsAsync<HookReplayUnsupportedContentException>(
+                    () => client.GetAsync("https://example.test/sanitize-diagnostics"));
+
+            Assert.Null(exception.InnerException);
+            Assert.DoesNotContain(rawSecret, exception.ToString(), StringComparison.Ordinal);
+            Assert.False(File.Exists(cassette));
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
     public async Task Redirect_responses_are_recorded_and_replayed_without_following()
     {
         string cassette = NewCassettePath();
@@ -1401,6 +1435,21 @@ public sealed class HookReplayBehaviorTests
         public string Redact(string input)
         {
             throw new InvalidOperationException("redactor failure");
+        }
+    }
+
+    private sealed class LeakingThrowingRedactor : ITextRedactor
+    {
+        private readonly string secret;
+
+        public LeakingThrowingRedactor(string secret)
+        {
+            this.secret = secret;
+        }
+
+        public string Redact(string input)
+        {
+            throw new InvalidOperationException("redactor failed for " + secret);
         }
     }
 
