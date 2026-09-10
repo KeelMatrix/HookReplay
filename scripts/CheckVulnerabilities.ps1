@@ -139,7 +139,16 @@ function Assert-AuditReportShape($Report) {
         Get-RequiredString $project "path" $projectPath | Out-Null
         # The SDK emits only project paths when --vulnerable finds no affected
         # packages. A frameworks array, when emitted, must be complete.
-        $frameworks = @(Get-OptionalArray $project "frameworks" $projectPath)
+        $frameworkProperty = $project.PSObject.Properties["frameworks"]
+        if ($null -eq $frameworkProperty) {
+            $frameworks = @()
+        }
+        else {
+            $frameworks = @(Get-OptionalArray $project "frameworks" $projectPath)
+            if ($frameworks.Count -eq 0) {
+                Fail "the audit report is structurally incomplete: '$projectPath.frameworks' must contain at least one framework when present."
+            }
+        }
 
         for ($frameworkIndex = 0; $frameworkIndex -lt $frameworks.Count; $frameworkIndex++) {
             $frameworkPath = "$projectPath.frameworks[$frameworkIndex]"
