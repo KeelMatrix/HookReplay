@@ -235,7 +235,7 @@ if ($problems.Count -gt 0) {
 
 $exceptionDocument = Read-JsonFile $ExceptionFile "Vulnerability exception file"
 $exceptions = @(Get-RequiredArray $exceptionDocument "exceptions" "exception document")
-$exceptionKeys = @{}
+$exceptionKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
 foreach ($exception in $exceptions) {
     Assert-JsonObject $exception "exception"
     $packageId = Get-StringValue $exception "packageId"
@@ -250,7 +250,7 @@ foreach ($exception in $exceptions) {
         [string]::IsNullOrWhiteSpace($mitigation)) {
         Fail "every vulnerability exception must specify packageId, advisoryUrl, scope, reason, and mitigation."
     }
-    $exceptionKeys["$packageId|$advisoryUrl"] = $true
+    [void]$exceptionKeys.Add("$packageId|$advisoryUrl")
 }
 
 $findings = @()
@@ -283,7 +283,7 @@ $uncovered = @($findings | Where-Object {
     $finding = $_
     $finding.AdvisoryUrls.Count -eq 0 -or
         @($finding.AdvisoryUrls | Where-Object {
-            $exceptionKeys.ContainsKey("$($finding.PackageId)|$_")
+            $exceptionKeys.Contains("$($finding.PackageId)|$_")
         }).Count -eq 0
 })
 

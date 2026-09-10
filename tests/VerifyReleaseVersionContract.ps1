@@ -35,7 +35,7 @@ foreach ($case in @(
     @{ Tag = "v0.1.0"; Version = "0.1.0" },
     @{ Tag = "v1.2.3"; Version = "1.2.3" },
     @{ Tag = "v10.20.30"; Version = "10.20.30" },
-    @{ Tag = "v65535.65535.65535"; Version = "65535.65535.65535" }
+    @{ Tag = "v65534.65534.65534"; Version = "65534.65534.65534" }
 )) {
     $result = Invoke-VersionScript $case.Tag
     Assert-Equal "0" $result.ExitCode "A valid release tag should be accepted."
@@ -46,6 +46,10 @@ foreach ($tag in @(
     "v01.2.3",
     "v1.02.3",
     "v1.2.03",
+    "v65535.0.0",
+    "v0.65535.0",
+    "v0.0.65535",
+    "v65535.65535.65535",
     "v65536.0.0",
     "v0.65536.0",
     "v0.0.65536",
