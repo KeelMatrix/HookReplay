@@ -34,6 +34,148 @@ function Get-StringValue($Object, [string] $Name) {
     return [string]$value
 }
 
+function Assert-JsonObject($Object, [string] $Path) {
+    if ($null -eq $Object -or
+        $Object -is [System.Array] -or
+        $Object -is [string] -or
+        $Object -is [System.ValueType]) {
+        Fail "the audit report is structurally invalid: '$Path' must be a JSON object."
+    }
+}
+
+function Get-RequiredProperty($Object, [string] $Name, [string] $Path) {
+    Assert-JsonObject $Object $Path
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        Fail "the audit report is structurally incomplete: '$Path.$Name' is required."
+    }
+
+    return $property.Value
+}
+
+function Get-RequiredString($Object, [string] $Name, [string] $Path) {
+    $value = Get-RequiredProperty $Object $Name $Path
+    if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) {
+        Fail "the audit report is structurally invalid: '$Path.$Name' must be a non-empty string."
+    }
+
+    return $value
+}
+
+function Get-RequiredArray($Object, [string] $Name, [string] $Path) {
+    Assert-JsonObject $Object $Path
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        Fail "the audit report is structurally incomplete: '$Path.$Name' is required."
+    }
+
+    $value = $property.Value
+    if ($value -isnot [System.Array]) {
+        Fail "the audit report is structurally invalid: '$Path.$Name' must be an array."
+    }
+
+    return $value
+}
+
+function Get-OptionalArray($Object, [string] $Name, [string] $Path) {
+    Assert-JsonObject $Object $Path
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return @()
+    }
+    if ($null -eq $property.Value -or $property.Value -isnot [System.Array]) {
+        Fail "the audit report is structurally invalid: '$Path.$Name' must be an array when present."
+    }
+
+    return $property.Value
+}
+
+function Get-RequiredAdvisoryUrls($Object, [string] $Path) {
+    $value = Get-RequiredProperty $Object "advisoryurl" $Path
+    if ($value -is [string]) {
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            Fail "the audit report is structurally invalid: '$Path.advisoryurl' must not be empty."
+        }
+        return @($value)
+    }
+
+    if ($value -isnot [System.Array] -or $value.Count -eq 0) {
+        Fail "the audit report is structurally invalid: '$Path.advisoryurl' must be a non-empty string or array of strings."
+    }
+
+    foreach ($advisoryUrl in $value) {
+        if ($advisoryUrl -isnot [string] -or [string]::IsNullOrWhiteSpace($advisoryUrl)) {
+            Fail "the audit report is structurally invalid: '$Path.advisoryurl' must contain only non-empty strings."
+        }
+    }
+
+    return @($value)
+}
+
+function Assert-AuditReportShape($Report) {
+    $rootPath = "report"
+    Assert-JsonObject $Report $rootPath
+
+    $version = Get-RequiredProperty $Report "version" $rootPath
+    if ($version -is [string] -or
+        $version -is [bool] -or
+        $version -isnot [System.ValueType] -or
+        [decimal]$version -ne 1) {
+        Fail "the audit report uses an unsupported or invalid machine-readable format version."
+    }
+
+    $projects = @(Get-RequiredArray $Report "projects" $rootPath)
+    if ($projects.Count -eq 0) {
+        Fail "the audit report is structurally incomplete: '$rootPath.projects' must contain at least one project."
+    }
+    # The SDK omits problems on a completed, clean report. If present, it must
+    # still be a complete array so an error cannot be mistaken for a clean run.
+    $problems = @(Get-OptionalArray $Report "problems" $rootPath)
+
+    for ($problemIndex = 0; $problemIndex -lt $problems.Count; $problemIndex++) {
+        $problemPath = "$rootPath.problems[$problemIndex]"
+        Assert-JsonObject $problems[$problemIndex] $problemPath
+        Get-RequiredString $problems[$problemIndex] "text" $problemPath | Out-Null
+        Get-RequiredString $problems[$problemIndex] "level" $problemPath | Out-Null
+    }
+
+    for ($projectIndex = 0; $projectIndex -lt $projects.Count; $projectIndex++) {
+        $projectPath = "$rootPath.projects[$projectIndex]"
+        $project = $projects[$projectIndex]
+        Assert-JsonObject $project $projectPath
+        Get-RequiredString $project "path" $projectPath | Out-Null
+        # The SDK emits only project paths when --vulnerable finds no affected
+        # packages. A frameworks array, when emitted, must be complete.
+        $frameworks = @(Get-OptionalArray $project "frameworks" $projectPath)
+
+        for ($frameworkIndex = 0; $frameworkIndex -lt $frameworks.Count; $frameworkIndex++) {
+            $frameworkPath = "$projectPath.frameworks[$frameworkIndex]"
+            $framework = $frameworks[$frameworkIndex]
+            Assert-JsonObject $framework $frameworkPath
+            Get-RequiredString $framework "framework" $frameworkPath | Out-Null
+
+            foreach ($packageGroupName in @("topLevelPackages", "transitivePackages")) {
+                $packages = @(Get-RequiredArray $framework $packageGroupName $frameworkPath)
+                for ($packageIndex = 0; $packageIndex -lt $packages.Count; $packageIndex++) {
+                    $packagePath = "$frameworkPath.$packageGroupName[$packageIndex]"
+                    $package = $packages[$packageIndex]
+                    Assert-JsonObject $package $packagePath
+                    Get-RequiredString $package "id" $packagePath | Out-Null
+                    Get-RequiredString $package "resolvedVersion" $packagePath | Out-Null
+                    $vulnerabilities = @(Get-RequiredArray $package "vulnerabilities" $packagePath)
+                    for ($vulnerabilityIndex = 0; $vulnerabilityIndex -lt $vulnerabilities.Count; $vulnerabilityIndex++) {
+                        $vulnerabilityPath = "$packagePath.vulnerabilities[$vulnerabilityIndex]"
+                        $vulnerability = $vulnerabilities[$vulnerabilityIndex]
+                        Assert-JsonObject $vulnerability $vulnerabilityPath
+                        Get-RequiredString $vulnerability "severity" $vulnerabilityPath | Out-Null
+                        Get-RequiredAdvisoryUrls $vulnerability $vulnerabilityPath | Out-Null
+                    }
+                }
+            }
+        }
+    }
+}
+
 function Read-JsonFile([string] $Path, [string] $Description) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         Fail "$Description '$Path' does not exist."
@@ -79,11 +221,9 @@ else {
     $report = Read-JsonFile $ReportPath "Audit report"
 }
 
-if ((Get-StringValue $report "version") -ne "1") {
-    Fail "the audit report uses an unsupported machine-readable format version."
-}
+Assert-AuditReportShape $report
 
-$problems = @((Get-PropertyValue $report "problems")) | Where-Object { $null -ne $_ }
+$problems = @(Get-OptionalArray $report "problems" "report")
 if ($problems.Count -gt 0) {
     $problemText = ($problems | ForEach-Object {
         $level = Get-StringValue $_ "level"
@@ -94,9 +234,10 @@ if ($problems.Count -gt 0) {
 }
 
 $exceptionDocument = Read-JsonFile $ExceptionFile "Vulnerability exception file"
-$exceptions = @((Get-PropertyValue $exceptionDocument "exceptions")) | Where-Object { $null -ne $_ }
+$exceptions = @(Get-RequiredArray $exceptionDocument "exceptions" "exception document")
 $exceptionKeys = @{}
 foreach ($exception in $exceptions) {
+    Assert-JsonObject $exception "exception"
     $packageId = Get-StringValue $exception "packageId"
     $advisoryUrl = Get-StringValue $exception "advisoryUrl"
     $scope = Get-StringValue $exception "scope"
@@ -113,16 +254,14 @@ foreach ($exception in $exceptions) {
 }
 
 $findings = @()
-foreach ($project in @((Get-PropertyValue $report "projects"))) {
-    foreach ($framework in @((Get-PropertyValue $project "frameworks"))) {
+foreach ($project in @(Get-RequiredArray $report "projects" "report")) {
+    foreach ($framework in @(Get-OptionalArray $project "frameworks" "report project")) {
         $frameworkName = Get-StringValue $framework "framework"
         foreach ($packageGroupName in @("topLevelPackages", "transitivePackages")) {
-            foreach ($package in @((Get-PropertyValue $framework $packageGroupName))) {
-                if ($null -eq $package) { continue }
+            foreach ($package in @(Get-RequiredArray $framework $packageGroupName "report framework")) {
                 $packageId = Get-StringValue $package "id"
                 $resolvedVersion = Get-StringValue $package "resolvedVersion"
-                foreach ($vulnerability in @((Get-PropertyValue $package "vulnerabilities"))) {
-                    if ($null -eq $vulnerability) { continue }
+                foreach ($vulnerability in @(Get-RequiredArray $package "vulnerabilities" "report package")) {
                     $advisoryUrls = @((Get-PropertyValue $vulnerability "advisoryurl")) |
                         Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
                         ForEach-Object { [string]$_ }

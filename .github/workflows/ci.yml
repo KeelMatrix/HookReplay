@@ -50,6 +50,11 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tests/VerifyReleaseVersionContract.ps1
 
+      - name: Verify vulnerability audit contract (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyVulnerabilityAuditContract.ps1
+
       - name: Configure macOS temporary directory
         if: runner.os == 'macOS'
         shell: bash
