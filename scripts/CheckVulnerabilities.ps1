@@ -99,17 +99,10 @@ function Get-RequiredAdvisoryUrls($Object, [string] $Path) {
         return @($value)
     }
 
-    if ($value -isnot [System.Array] -or $value.Count -eq 0) {
-        Fail "the audit report is structurally invalid: '$Path.advisoryurl' must be a non-empty string or array of strings."
-    }
-
-    foreach ($advisoryUrl in $value) {
-        if ($advisoryUrl -isnot [string] -or [string]::IsNullOrWhiteSpace($advisoryUrl)) {
-            Fail "the audit report is structurally invalid: '$Path.advisoryurl' must contain only non-empty strings."
-        }
-    }
-
-    return @($value)
+    # The .NET SDK machine-readable schema emits one advisory URL per
+    # vulnerability object. Reject arrays so an unrecognized shape cannot
+    # accidentally be treated as fully covered by one exception.
+    Fail "the audit report is structurally invalid: '$Path.advisoryurl' must be a non-empty string."
 }
 
 function Assert-AuditReportShape($Report) {
@@ -262,9 +255,7 @@ foreach ($project in @(Get-RequiredArray $report "projects" "report")) {
                 $packageId = Get-StringValue $package "id"
                 $resolvedVersion = Get-StringValue $package "resolvedVersion"
                 foreach ($vulnerability in @(Get-RequiredArray $package "vulnerabilities" "report package")) {
-                    $advisoryUrls = @((Get-PropertyValue $vulnerability "advisoryurl")) |
-                        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
-                        ForEach-Object { [string]$_ }
+                    $advisoryUrls = @(Get-RequiredAdvisoryUrls $vulnerability "report vulnerability")
                     $findings += [pscustomobject]@{
                         PackageId = $packageId
                         ResolvedVersion = $resolvedVersion
