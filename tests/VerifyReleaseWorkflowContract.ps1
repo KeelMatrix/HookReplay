@@ -43,10 +43,12 @@ function Assert-WorkflowContract {
     param([string] $Text)
 
     $activeText = Get-ActiveWorkflowText $Text
+    $contractScript = Join-Path $RepositoryRoot 'scripts\Test-ChangelogContract.ps1'
     $validationJob = Get-JobText $activeText 'validate-release'
     $publishJob = Get-JobText $activeText 'publish'
     Assert-True ($null -ne $validationJob) 'The release workflow must have a validation job.'
     Assert-True ($null -ne $publishJob) 'The release workflow must have a publication job.'
+    Assert-True (Test-Path -LiteralPath $contractScript -PathType Leaf) 'The reusable changelog contract script must exist.'
     Assert-True ($publishJob -match '(?m)^\s*needs:\s*validate-release\s*$') 'Publication must depend on successful validation.'
     Assert-True ($validationJob -notmatch '(?m)^\s+id-token:\s*write\s*$') 'The validation job must not request OIDC identity tokens.'
     Assert-True ($publishJob -match '(?m)^\s+id-token:\s*write\s*$') 'Only the publication job must request OIDC identity tokens.'
@@ -61,6 +63,15 @@ function Assert-WorkflowContract {
     Assert-True ($activeText -match 'NuGet/login@v1') 'Trusted Publishing login must use the approved action.'
     Assert-True ($activeText -match '(?m)^\s+user:\s*dmitriyzen\s*$') 'Trusted Publishing must use the approved NuGet.org username.'
     Assert-True ($activeText -match 'KEELMATRIX_NO_TELEMETRY:\s*["'']1["'']') 'Release telemetry suppression must remain enabled.'
+    Assert-True ($validationJob -match 'scripts[/\\]Test-ChangelogContract\.ps1') 'The validation job must invoke the reusable changelog contract script.'
+    Assert-True ($validationJob -match '(?m)^\s+\-ExpectedPackageVersion\s+\$env:EXPECTED_PACKAGE_VERSION\s+`?\s*$') 'The changelog contract must receive the validated package version.'
+    Assert-True ($validationJob -match '(?m)^\s+\-ExpectedCommit\s+\$env:EXPECTED_COMMIT\s*$') 'The changelog contract must receive the exact checked-out commit.'
+    Assert-True ($validationJob -match '(?m)^\s+EXPECTED_COMMIT:\s*\$\{\{\s*github\.sha\s*\}\}\s*$') 'The changelog contract must receive the exact checked-out commit.'
+    Assert-True ($validationJob -match '(?m)^\s+EXPECTED_PACKAGE_VERSION:\s*\$\{\{\s*steps\.release-version\.outputs\.version\s*\}\}\s*$') 'The changelog contract must receive the validated package version.'
+    $changelogIndex = $validationJob.IndexOf('scripts/Test-ChangelogContract.ps1', [StringComparison]::Ordinal)
+    $restoreIndex = $validationJob.IndexOf('- name: Restore from nuget.org', [StringComparison]::Ordinal)
+    $packIndex = $validationJob.IndexOf('- name: Pack expected artifacts', [StringComparison]::Ordinal)
+    Assert-True ($changelogIndex -ge 0 -and $restoreIndex -gt $changelogIndex -and $packIndex -gt $changelogIndex) 'The changelog contract must run before restore and pack.'
     Assert-True ($activeText -match 'https://api\.nuget\.org/v3/index\.json') 'Publication must use the controlled NuGet.org V3 source.'
     Assert-True ($activeText -match '\$\{\{\s*steps\.nuget-login\.outputs\.NUGET_API_KEY\s*\}\}') 'Publication must use the short-lived login output.'
     Assert-True ($activeText -notmatch '(?i)secrets\.NUGET_API_KEY|skip-duplicate') 'Publication must fail closed and must not use a long-lived secret or duplicate-skipping behavior.'

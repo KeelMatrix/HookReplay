@@ -18,6 +18,14 @@
 - Local tests: `dotnet test KeelMatrix.HookReplay.sln -c Release` (the test assembly enforces non-production telemetry suppression)
 - Package-consumer smoke: `pwsh -NoProfile -File tests/RunPackageConsumerSmoke.ps1`
 
+Before creating a release tag, finalize the target `CHANGELOG.md` entry with a release date and run the same publication-gate check on the exact commit that will be tagged:
+
+```text
+pwsh -NoProfile -File scripts/Test-ChangelogContract.ps1 -Tag vX.Y.Z -ExpectedPackageVersion X.Y.Z -ExpectedCommit (git rev-parse HEAD)
+```
+
+The check must pass after the changelog finalization is committed and pushed. Do not create the tag until the verified commit is the commit you intend to release.
+
 ## Invariants
 
 - Replay never invokes the inner handler, including on a cassette miss.

@@ -54,6 +54,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tests/VerifyReleaseWorkflowContract.ps1
 
+      - name: Verify changelog finalization contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyChangelogContract.ps1
+
       - name: Verify history hygiene contract
         shell: pwsh
         run: pwsh -NoProfile -File tests/VerifyHistoryHygieneContract.ps1
