@@ -316,8 +316,19 @@ internal sealed class LimitedMemoryStream : MemoryStream
 
     private void EnsureCapacity(int incoming)
     {
-        if (Length > limit - incoming)
+        long required = Length + (long)incoming;
+        if (required > limit)
             throw new HookReplaySizeLimitException(limitMessage);
+
+        if (required > Capacity)
+        {
+            int doubledCapacity = Capacity == 0
+                ? 256
+                : Capacity > limit / 2
+                    ? limit
+                    : Capacity * 2;
+            Capacity = Math.Max((int)required, Math.Min(limit, doubledCapacity));
+        }
     }
 }
 
@@ -777,7 +788,8 @@ internal static class CassetteFile
         string path,
         int supportedVersion,
         HttpSanitizer sanitizer,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<string, Stream>? openRead = null)
     {
         string fullPath = GetFullPath(path);
         if (!File.Exists(fullPath))
@@ -787,11 +799,32 @@ internal static class CassetteFile
 
         try
         {
-            var info = new FileInfo(fullPath);
-            if (info.Length > MaxCassetteBytes)
+            using Stream source = (openRead ?? OpenRead)(fullPath);
+            if (source.Length > MaxCassetteBytes)
                 throw new HookReplaySizeLimitException(MaxCassetteSizeMessage);
-            byte[] bytes = await Task.Run(() => File.ReadAllBytes(fullPath), cancellationToken)
-                .ConfigureAwait(false);
+
+            using var bounded = new LimitedMemoryStream(
+                (int)MaxCassetteBytes,
+                MaxCassetteSizeMessage);
+            byte[] buffer = new byte[81920];
+            while (true)
+            {
+#if NET8_0_OR_GREATER
+                int read = await source.ReadAsync(buffer.AsMemory(), cancellationToken)
+                    .ConfigureAwait(false);
+#else
+                int read = await source.ReadAsync(buffer, 0, buffer.Length, cancellationToken)
+                    .ConfigureAwait(false);
+#endif
+                if (read == 0)
+                    break;
+                bounded.Write(buffer, 0, read);
+            }
+
+            if (source.Length > MaxCassetteBytes)
+                throw new HookReplaySizeLimitException(MaxCassetteSizeMessage);
+
+            byte[] bytes = bounded.ToArray();
             using JsonDocument document = JsonDocument.Parse(bytes);
             JsonElement root = document.RootElement;
             int version = RequiredInt(root, "schemaVersion");
@@ -821,6 +854,17 @@ internal static class CassetteFile
         {
             throw new HookReplayIOException("The cassette could not be read.", exception);
         }
+    }
+
+    private static FileStream OpenRead(string path)
+    {
+        return new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            81920,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
     }
 
     public static async Task WriteAsync(

@@ -218,6 +218,83 @@ public sealed class HookReplayBehaviorTests
     }
 
     [Fact]
+    public async Task Reader_rejects_concurrent_growth_past_limit_after_metadata_check()
+    {
+        string cassette = NewCassettePath();
+        byte[] valid = Encoding.UTF8.GetBytes(ValidCassette("1.1", "200"));
+        byte[] grown = new byte[(int)CassetteFile.MaxCassetteBytes + 1];
+        Buffer.BlockCopy(valid, 0, grown, 0, valid.Length);
+        Array.Fill(grown, (byte)' ', valid.Length, grown.Length - valid.Length);
+        await File.WriteAllBytesAsync(cassette, valid);
+
+        try
+        {
+            using var source = new GrowingCassetteStream(grown, valid.LongLength);
+            HookReplaySizeLimitException exception = await Assert.ThrowsAsync<HookReplaySizeLimitException>(
+                () => CassetteFile.ReadAsync(
+                    cassette,
+                    1,
+                    new HttpSanitizer(Array.Empty<ITextRedactor>()),
+                    CancellationToken.None,
+                    _ => source));
+
+            Assert.Contains("32 MiB safety limit", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Reader_allows_exact_maximum_cassette_and_rejects_one_byte_over()
+    {
+        string cassette = NewCassettePath();
+        CassetteInteraction emptyBody = BoundaryInteraction(string.Empty);
+
+        try
+        {
+            await CassetteFile.WriteAsync(
+                cassette,
+                1,
+                new[] { emptyBody },
+                CancellationToken.None);
+            long emptyBodyLength = new FileInfo(cassette).Length;
+            int bodyLength = checked((int)(CassetteFile.MaxCassetteBytes - emptyBodyLength));
+
+            DeleteCassette(cassette);
+            await CassetteFile.WriteAsync(
+                cassette,
+                1,
+                new[] { BoundaryInteraction(new string('x', bodyLength)) },
+                CancellationToken.None);
+
+            Assert.Equal(CassetteFile.MaxCassetteBytes, new FileInfo(cassette).Length);
+            IReadOnlyList<CassetteInteraction> readable = await CassetteFile.ReadAsync(
+                cassette,
+                1,
+                new HttpSanitizer(Array.Empty<ITextRedactor>()),
+                CancellationToken.None);
+            Assert.Single(readable);
+
+            using (var append = new FileStream(cassette, FileMode.Append, FileAccess.Write, FileShare.Read))
+                append.WriteByte((byte)' ');
+
+            HookReplaySizeLimitException exception = await Assert.ThrowsAsync<HookReplaySizeLimitException>(
+                () => CassetteFile.ReadAsync(
+                    cassette,
+                    1,
+                    new HttpSanitizer(Array.Empty<ITextRedactor>()),
+                    CancellationToken.None));
+            Assert.Contains("32 MiB safety limit", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
     public async Task Cassette_is_deterministic_and_does_not_persist_secrets()
     {
         string first = NewCassettePath();
@@ -1440,6 +1517,36 @@ public sealed class HookReplayBehaviorTests
             + "\",\"headers\":[],\"bodyHeaders\":[],\"body\":null}}]}";
     }
 
+    private static CassetteInteraction BoundaryInteraction(string responseBody)
+    {
+        return new CassetteInteraction
+        {
+            Request = new CassetteRequest
+            {
+                Method = "GET",
+                NormalizedUri = "https://example.test/boundary",
+                Headers = new List<CassetteHeader>(),
+                MatchHeaders = new List<CassetteHeader>()
+            },
+            Response = new CassetteResponse
+            {
+                StatusCode = 200,
+                ReasonPhrase = "OK",
+                Version = HttpVersion.Version11,
+                Headers = new List<CassetteHeader>(),
+                BodyHeaders = new List<CassetteHeader>
+                {
+                    new("Content-Type", "text/plain; charset=utf-8")
+                },
+                Body = new CassetteBody
+                {
+                    ContentType = "text/plain; charset=utf-8",
+                    Text = responseBody
+                }
+            }
+        };
+    }
+
     private static string CassetteWithRequest(
         string? bodyFingerprint,
         string? bodyContentType,
@@ -1511,6 +1618,19 @@ public sealed class HookReplayBehaviorTests
             Calls++;
             throw new InvalidOperationException("Network handler invoked.");
         }
+    }
+
+    private sealed class GrowingCassetteStream : MemoryStream
+    {
+        private readonly long initialLength;
+
+        public GrowingCassetteStream(byte[] bytes, long initialLength)
+            : base(bytes, writable: false)
+        {
+            this.initialLength = initialLength;
+        }
+
+        public override long Length => Position == 0 ? initialLength : base.Length;
     }
 
     private sealed class ScriptedHandler : HttpMessageHandler
