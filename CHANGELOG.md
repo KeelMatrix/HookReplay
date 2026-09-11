@@ -6,12 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-- Sanitize response reason phrases before cassette persistence and keep release metadata aligned with the validated package version.
-
-## [0.1.0]
+## [0.1.0] - Planned (not yet published)
 
 Initial package contents for the first release candidate. This entry describes the planned `0.1.0` package; it does not indicate that the package has been published.
 
 - Record and replay `HttpClient` exchanges with deterministic, versioned cassettes.
 - Enforce replay-only operation without network fallback.
 - Sanitize sensitive HTTP material before durable cassette writes.
+
+### Changed
+
+- Sanitize response reason phrases before cassette persistence.
+- Keep release metadata aligned with the validated package version.

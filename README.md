@@ -5,7 +5,7 @@ Real HTTP calls make integration tests slow and flaky. HookReplay records an int
 ## Install
 
 ~~~bash
-dotnet add package KeelMatrix.HookReplay
+dotnet add package KeelMatrix.HookReplay --version 0.1.0
 ~~~
 
 ## Five-minute record and replay
