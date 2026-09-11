@@ -50,14 +50,16 @@ function Write-Fixture {
         [Parameter(Mandatory)] [string] $Root,
         [Parameter(Mandatory)] [string] $ReleaseHeading,
         [string] $PackageVersion = "1.2.3",
-        [string] $InstallVersion = "1.2.3"
+        [string] $InstallVersion = "1.2.3",
+        [string] $InstallExample = "",
+        [string] $UnreleasedHeading = "## [Unreleased]"
     )
 
     New-Item -ItemType Directory -Path $Root -Force | Out-Null
     $changelog = @"
 # Changelog
 
-## [Unreleased]
+$UnreleasedHeading
 
 $ReleaseHeading
 
@@ -71,7 +73,12 @@ $ReleaseHeading
   </PropertyGroup>
 </Project>
 "@
-    $readme = "dotnet add package KeelMatrix.HookReplay --version $InstallVersion`n"
+    $readme = if ([string]::IsNullOrWhiteSpace($InstallExample)) {
+        "dotnet add package KeelMatrix.HookReplay --version $InstallVersion`n"
+    }
+    else {
+        $InstallExample
+    }
     [IO.File]::WriteAllText((Join-Path $Root "CHANGELOG.md"), $changelog, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $Root "Directory.Build.props"), $props, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $Root "README.md"), $readme, [Text.UTF8Encoding]::new($false))
@@ -109,7 +116,7 @@ try {
     Assert-True ($result.ExitCode -ne 0) "A Planned target version must fail the publication gate. Output: $($result.Output)"
 
     $nestedRoot = Join-Path $temporaryDirectory "nested-unreleased"
-    Write-Fixture $nestedRoot "### [1.2.3] - $today"
+    Write-Fixture $nestedRoot "## [1.2.3] - $today" -UnreleasedHeading "# [Unreleased]"
     $result = Invoke-Contract $nestedRoot "v1.2.3"
     Assert-True ($result.ExitCode -ne 0) "A target nested under Unreleased must fail the publication gate. Output: $($result.Output)"
 
@@ -125,9 +132,13 @@ try {
     Assert-True ($result.ExitCode -ne 0) "A future release date must fail the publication gate. Output: $($result.Output)"
 
     $finalizedRoot = Join-Path $temporaryDirectory "finalized"
-    Write-Fixture $finalizedRoot "## [1.2.3] - $today"
+    $consistentInstallExample = @'
+dotnet add package KeelMatrix.HookReplay \
+  --version 1.2.3
+'@
+    Write-Fixture $finalizedRoot "## [1.2.3] - $today" -InstallExample $consistentInstallExample
     $result = Invoke-Contract $finalizedRoot "v1.2.3"
-    Assert-True ($result.ExitCode -eq 0) "A finalized target with consistent package and install metadata must pass. Output: $($result.Output)"
+    Assert-True ($result.ExitCode -eq 0) "A finalized target with consistent multiline package and install metadata must pass. Output: $($result.Output)"
 
     $changelogMismatchRoot = Join-Path $temporaryDirectory "changelog-mismatch"
     Write-Fixture $changelogMismatchRoot "## [1.2.4] - $today"
@@ -140,9 +151,13 @@ try {
     Assert-True ($result.ExitCode -ne 0) "A package/tag version mismatch must fail closed. Output: $($result.Output)"
 
     $installMismatchRoot = Join-Path $temporaryDirectory "install-mismatch"
-    Write-Fixture $installMismatchRoot "## [1.2.3] - $today" "1.2.3" "1.2.4"
+    $mismatchedInstallExample = @'
+dotnet add package KeelMatrix.HookReplay `
+  --version 1.2.4
+'@
+    Write-Fixture $installMismatchRoot "## [1.2.3] - $today" -InstallExample $mismatchedInstallExample
     $result = Invoke-Contract $installMismatchRoot "v1.2.3"
-    Assert-True ($result.ExitCode -ne 0) "An install-example/version mismatch must fail closed. Output: $($result.Output)"
+    Assert-True ($result.ExitCode -ne 0) "A multiline install-example/version mismatch must fail closed. Output: $($result.Output)"
 
     $exactCommitRoot = Join-Path $temporaryDirectory "exact-commit"
     Write-Fixture $exactCommitRoot "## [1.2.3] - $today"
