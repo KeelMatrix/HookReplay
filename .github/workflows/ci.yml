@@ -50,6 +50,14 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tests/VerifyReleaseVersionContract.ps1
 
+      - name: Verify release publication contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyReleaseWorkflowContract.ps1
+
+      - name: Verify history hygiene contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyHistoryHygieneContract.ps1
+
       - name: Verify vulnerability audit contract (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
         shell: pwsh

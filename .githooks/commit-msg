@@ -8,15 +8,22 @@ fi
 
 message_file=$1
 
-label_co_author=$(printf '\143\157\055\141\165\164\150\157\162\145\144\055\142\171')
-label_signed_off=$(printf '\163\151\147\156\145\144\055\157\146\146\055\142\171')
-label_reviewed=$(printf '\162\145\166\151\145\167\145\144\055\142\171')
-label_tested=$(printf '\164\145\163\164\145\144\055\142\171')
-label_acked=$(printf '\141\143\153\145\144\055\142\171')
-label_reported=$(printf '\162\145\160\157\162\164\145\144\055\142\171')
-label_approved=$(printf '\141\160\160\162\157\166\145\144\055\142\171')
+# Git for Windows can invoke hooks without its bundled Unix tools on PATH.
+# Restore that path when possible, and fail closed if the checker is unavailable.
+if ! command -v grep >/dev/null 2>&1; then
+  PATH="/usr/bin:/bin:$PATH"
+  export PATH
+fi
 
-if LC_ALL=C grep -Eiq "^[[:space:]]*(${label_co_author}|${label_signed_off}|${label_reviewed}|${label_tested}|${label_acked}|${label_reported}|${label_approved})[[:space:]]*:" "$message_file"; then
+if ! command -v grep >/dev/null 2>&1; then
+  printf '%s\n' 'Commit message check could not run its checker.' >&2
+  exit 2
+fi
+
+# Git identity trailers use a key ending in -by. Reject the whole class rather
+# than maintaining a list that can miss a newly introduced trailer name.
+identity_trailer_pattern=$(printf '^[[:space:]]*[[:alnum:]][[:alnum:]-]*-[bB][yY][[:space:]]*:')
+if LC_ALL=C grep -Eiq "$identity_trailer_pattern" "$message_file"; then
   printf '%s\n' 'Commit message rejected: identity trailers are not allowed.' >&2
   exit 1
 fi

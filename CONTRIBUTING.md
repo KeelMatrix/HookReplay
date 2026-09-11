@@ -22,3 +22,17 @@ To verify a simulated release tag without publishing, run `pwsh -NoProfile -File
 Security reports must use the private channels in [SECURITY.md](SECURITY.md), not a public issue. Public API changes require a reviewed update to the shipping/unshipped API baseline beside the shipping project.
 
 Do not commit credentials, real customer data, generated build output, or local telemetry configuration.
+
+## Commit checks
+
+Enable the repository-controlled checks once in each clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The local hook rejects identity trailers and internal metadata. The history-hygiene workflow is the authoritative backstop and scans every commit reachable from the checked-out refs.
+
+## Release publication
+
+The release workflow creates one validated `.nupkg` and its adjacent `.snupkg`, then pushes the exact `.nupkg` once to NuGet.org. NuGet publishes the adjacent symbol package as part of that paired push, so the workflow intentionally has no separate symbol push.

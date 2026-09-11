@@ -81,10 +81,3 @@ jobs:
           ./artifacts/packages/KeelMatrix.HookReplay.${{ steps.release-version.outputs.version }}.nupkg
           --source https://api.nuget.org/v3/index.json
           --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
-
-      - name: Publish the expected symbol package
-        run: >
-          dotnet nuget push
-          ./artifacts/packages/KeelMatrix.HookReplay.${{ steps.release-version.outputs.version }}.snupkg
-          --source https://api.nuget.org/v3/index.json
-          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
