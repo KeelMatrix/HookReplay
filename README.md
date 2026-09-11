@@ -76,11 +76,11 @@ sealed class TenantMatcher : IHookReplayRequestMatcher
 }
 ~~~
 
-Mismatch diagnostics describe the nearest difference (method, normalized URI, selected header, or body fingerprint) without echoing raw secrets.
+Mismatch diagnostics rank unconsumed candidates by the number of mismatching dimensions (method, normalized URI, selected header, or body fingerprint), with earlier cassette order breaking ties. The nearest difference is reported without echoing raw secrets.
 
 ## Cassette format and safety
 
-Cassettes are HookReplay schema version 1 JSON. They are UTF-8 with a final LF, stable property order, sorted headers/query parameters, and no machine-specific paths. Unsupported future schema versions fail with HookReplayUnsupportedCassetteVersionException; malformed files fail with HookReplayMalformedCassetteException. Replay revalidates persisted request and response content types, body representations, body fingerprints, and content-type headers before matching or returning a response, so unsupported or internally inconsistent content fails with a HookReplay-specific exception.
+Cassettes are HookReplay schema version 1 JSON. They are UTF-8 with a final LF, stable property order, sorted headers/query parameters, and no machine-specific paths. The total durable cassette, including all interactions, is limited to 32 MiB; Record rejects an oversized update before replacing the previous cassette, and Replay rejects a file beyond the same limit. Unsupported future schema versions fail with HookReplayUnsupportedCassetteVersionException; malformed files fail with HookReplayMalformedCassetteException. Replay revalidates persisted request and response content types, body representations, body fingerprints, and content-type headers before matching or returning a response, so unsupported or internally inconsistent content fails with a HookReplay-specific exception.
 
 Authorization, proxy authorization, cookies, set-cookie, API-key-like headers, sensitive query/form fields, common secret properties in JSON bodies, and response reason phrases are passed through the safe text-redaction boundary before persistence. The package also applies the built-in KeelMatrix.Redaction protections. Add project-specific protection without touching cassette-writing stages; configured redactors are applied to opaque URI query values, non-structural header values, response reason phrases, and text/JSON/form body values before either matching data or cassette bytes are created:
 

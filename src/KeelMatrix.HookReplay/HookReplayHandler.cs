@@ -14,10 +14,16 @@ namespace KeelMatrix.HookReplay;
 /// <summary>
 /// Records successful HTTP exchanges or replays them from a deterministic cassette.
 /// </summary>
+/// <remarks>
+/// The cassette path, body limit, selected headers, redactors, and custom matcher are
+/// captured when the handler is constructed. The current mode is read and validated
+/// at the start of every request so an invalid mutation fails closed.
+/// </remarks>
 public sealed class HookReplayHandler : DelegatingHandler
 {
     private const int CassetteSchemaVersion = 1;
     private const string Redacted = "[REDACTED]";
+    private readonly HookReplayOptions liveOptions;
     private readonly HookReplayOptions options;
     private readonly SemaphoreSlim cassetteGate = new(1, 1);
     private readonly IHookReplayTelemetry telemetry;
@@ -39,13 +45,14 @@ public sealed class HookReplayHandler : DelegatingHandler
         IHookReplayTelemetry telemetry)
         : base(innerHandler ?? new HttpClientHandler())
     {
-        this.options = options ?? throw new ArgumentNullException(nameof(options));
+        this.liveOptions = options ?? throw new ArgumentNullException(nameof(options));
         this.telemetry = telemetry ?? throw new ArgumentNullException(nameof(telemetry));
         if (!Enum.IsDefined(typeof(HookReplayMode), options.Mode))
             throw new ArgumentOutOfRangeException(nameof(options), "The HookReplay mode is not supported.");
         if (options.MaxBodyBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(options), "MaxBodyBytes must be greater than zero.");
         CassetteFile.ValidatePath(options.CassettePath);
+        this.options = SnapshotOptions(options);
     }
 
     private static HookReplayTelemetry CreateTelemetry(HookReplayOptions options)
@@ -65,10 +72,44 @@ public sealed class HookReplayHandler : DelegatingHandler
         if (request is null)
             throw new ArgumentNullException(nameof(request));
 
-        if (options.Mode == HookReplayMode.Replay)
-            return await ReplayAsync(request, cancellationToken).ConfigureAwait(false);
+        switch (ValidateCurrentMode())
+        {
+            case HookReplayMode.Replay:
+                return await ReplayAsync(request, cancellationToken).ConfigureAwait(false);
+            case HookReplayMode.Record:
+                return await RecordAsync(request, cancellationToken).ConfigureAwait(false);
+            default:
+                throw new InvalidOperationException("HookReplay mode validation did not produce a supported mode.");
+        }
+    }
 
-        return await RecordAsync(request, cancellationToken).ConfigureAwait(false);
+    private HookReplayMode ValidateCurrentMode()
+    {
+        HookReplayMode mode = liveOptions.Mode;
+        if (!Enum.IsDefined(typeof(HookReplayMode), mode))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(HookReplayOptions.Mode),
+                mode,
+                "The current HookReplay mode is not supported. Set Mode to Record or Replay.");
+        }
+
+        return mode;
+    }
+
+    private static HookReplayOptions SnapshotOptions(HookReplayOptions source)
+    {
+        var snapshot = new HookReplayOptions(source.CassettePath)
+        {
+            Mode = source.Mode,
+            MaxBodyBytes = source.MaxBodyBytes,
+            RequestMatcher = source.RequestMatcher
+        };
+        foreach (string header in source.MatchHeaders)
+            snapshot.MatchHeaders.Add(header);
+        foreach (ITextRedactor redactor in source.Redactors)
+            snapshot.Redactors.Add(redactor);
+        return snapshot;
     }
 
     private async Task<HttpResponseMessage> ReplayAsync(
@@ -84,20 +125,31 @@ public sealed class HookReplayHandler : DelegatingHandler
 
         CassetteInteraction? selected = null;
         string? mismatch = null;
+        int closestMismatchCount = int.MaxValue;
+        int closestCandidateIndex = int.MaxValue;
         await cassetteGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            foreach (CassetteInteraction candidate in interactions)
+            for (int candidateIndex = 0; candidateIndex < interactions.Count; candidateIndex++)
             {
+                CassetteInteraction candidate = interactions[candidateIndex];
                 if (candidate.Consumed)
                     continue;
 
-                if (!RequestMatching.IsDefaultMatch(capture.Request, candidate.Request, options.MatchHeaders))
+                RequestMatching.Difference difference = RequestMatching.DescribeDifference(
+                    capture.Request,
+                    candidate.Request,
+                    options.MatchHeaders);
+                if (!difference.IsMatch)
                 {
-                    mismatch ??= RequestMatching.DescribeNearestDifference(
-                        capture.Request,
-                        candidate.Request,
-                        options.MatchHeaders);
+                    if (difference.MismatchCount < closestMismatchCount ||
+                        (difference.MismatchCount == closestMismatchCount &&
+                         candidateIndex < closestCandidateIndex))
+                    {
+                        closestMismatchCount = difference.MismatchCount;
+                        closestCandidateIndex = candidateIndex;
+                        mismatch = difference.Description;
+                    }
                     continue;
                 }
 
@@ -105,7 +157,13 @@ public sealed class HookReplayHandler : DelegatingHandler
                 if (options.RequestMatcher is not null &&
                     !options.RequestMatcher.Matches(capture.Request, recorded))
                 {
-                    mismatch ??= "custom matcher";
+                    if (1 < closestMismatchCount ||
+                        (closestMismatchCount == 1 && candidateIndex < closestCandidateIndex))
+                    {
+                        closestMismatchCount = 1;
+                        closestCandidateIndex = candidateIndex;
+                        mismatch = "custom matcher";
+                    }
                     continue;
                 }
 

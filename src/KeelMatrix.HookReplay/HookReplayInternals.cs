@@ -283,10 +283,13 @@ internal sealed class BodyCapture
 internal sealed class LimitedMemoryStream : MemoryStream
 {
     private readonly int limit;
+    private readonly string limitMessage;
 
-    public LimitedMemoryStream(int limit)
+    public LimitedMemoryStream(int limit, string? limitMessage = null)
     {
         this.limit = limit;
+        this.limitMessage = limitMessage ??
+            "The HTTP body exceeds the configured MaxBodyBytes limit of " + limit + " bytes.";
     }
 
     public override void Write(byte[] buffer, int offset, int count)
@@ -305,11 +308,16 @@ internal sealed class LimitedMemoryStream : MemoryStream
         return base.WriteAsync(buffer, offset, count, cancellationToken);
     }
 
+    public override void WriteByte(byte value)
+    {
+        EnsureCapacity(1);
+        base.WriteByte(value);
+    }
+
     private void EnsureCapacity(int incoming)
     {
         if (Length > limit - incoming)
-            throw new HookReplaySizeLimitException(
-                "The HTTP body exceeds the configured MaxBodyBytes limit of " + limit + " bytes.");
+            throw new HookReplaySizeLimitException(limitMessage);
     }
 }
 
@@ -660,29 +668,28 @@ internal static class UriNormalizer
 
 internal static class RequestMatching
 {
+    internal readonly struct Difference
+    {
+        public Difference(int mismatchCount, string description)
+        {
+            MismatchCount = mismatchCount;
+            Description = description;
+        }
+
+        public int MismatchCount { get; }
+        public string Description { get; }
+        public bool IsMatch => MismatchCount == 0;
+    }
+
     public static bool IsDefaultMatch(
         HookReplayRequest request,
         CassetteRequest recorded,
         ISet<string> selectedHeaders)
     {
-        if (!string.Equals(request.Method, recorded.Method, StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(request.NormalizedUri, recorded.NormalizedUri, StringComparison.Ordinal) ||
-            !string.Equals(request.BodyFingerprint, recorded.BodyFingerprint, StringComparison.Ordinal))
-            return false;
-
-        Dictionary<string, string> selected = request.Headers
-            .Where(pair => selectedHeaders.Contains(pair.Key))
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, string> recordedSelected = recorded.MatchHeaders
-            .ToDictionary(pair => pair.Name, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
-        if (selected.Count != recordedSelected.Count)
-            return false;
-        return selected.All(pair =>
-            recordedSelected.TryGetValue(pair.Key, out string? value) &&
-            string.Equals(pair.Value, value, StringComparison.Ordinal));
+        return DescribeDifference(request, recorded, selectedHeaders).IsMatch;
     }
 
-    public static string DescribeNearestDifference(
+    public static Difference DescribeDifference(
         HookReplayRequest request,
         CassetteRequest recorded,
         ISet<string> selectedHeaders)
@@ -700,14 +707,19 @@ internal static class RequestMatching
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
         Dictionary<string, string> expected = recorded.MatchHeaders
             .ToDictionary(pair => pair.Name, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
-        foreach (string name in selectedHeaders.OrderBy(name => name, StringComparer.OrdinalIgnoreCase))
+        foreach (string name in actual.Keys
+            .Concat(expected.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase))
         {
             if (!actual.TryGetValue(name, out string? actualValue) ||
                 !expected.TryGetValue(name, out string? expectedValue) ||
                 !string.Equals(actualValue, expectedValue, StringComparison.Ordinal))
                 differences.Add("selected header '" + name + "'");
         }
-        return differences.Count == 0 ? "custom matcher" : string.Join(", ", differences);
+        return new Difference(
+            differences.Count,
+            differences.Count == 0 ? "custom matcher" : string.Join(", ", differences));
     }
 
     public static HookReplayRequest ToPublicRequest(CassetteRequest request)
@@ -740,7 +752,9 @@ internal sealed class CassetteHeader
 
 internal static class CassetteFile
 {
-    private const long MaxCassetteBytes = 32L * 1024 * 1024;
+    internal const long MaxCassetteBytes = 32L * 1024 * 1024;
+    private const string MaxCassetteSizeMessage =
+        "The total cassette size exceeds the 32 MiB safety limit.";
 
     public static void ValidatePath(string path)
     {
@@ -775,7 +789,7 @@ internal static class CassetteFile
         {
             var info = new FileInfo(fullPath);
             if (info.Length > MaxCassetteBytes)
-                throw new HookReplaySizeLimitException("The cassette file exceeds the 32 MiB safety limit.");
+                throw new HookReplaySizeLimitException(MaxCassetteSizeMessage);
             byte[] bytes = await Task.Run(() => File.ReadAllBytes(fullPath), cancellationToken)
                 .ConfigureAwait(false);
             using JsonDocument document = JsonDocument.Parse(bytes);
@@ -828,6 +842,8 @@ internal static class CassetteFile
             Directory.CreateDirectory(directory);
             EnsureNoReparsePoints(fullPath);
             byte[] bytes = Serialize(schemaVersion, interactions);
+            if (bytes.LongLength > MaxCassetteBytes)
+                throw new HookReplaySizeLimitException(MaxCassetteSizeMessage);
             await Task.Run(() => File.WriteAllBytes(tempPath, bytes), cancellationToken)
                 .ConfigureAwait(false);
             if (File.Exists(fullPath))
@@ -872,7 +888,9 @@ internal static class CassetteFile
         int schemaVersion,
         IReadOnlyList<CassetteInteraction> interactions)
     {
-        using var stream = new MemoryStream();
+        using var stream = new LimitedMemoryStream(
+            (int)MaxCassetteBytes,
+            MaxCassetteSizeMessage);
         using (var writer = new Utf8JsonWriter(
             stream,
             new JsonWriterOptions
@@ -895,9 +913,8 @@ internal static class CassetteFile
             writer.WriteEndArray();
             writer.WriteEndObject();
         }
-        byte[] json = stream.ToArray();
-        byte[] newline = { (byte)'\n' };
-        return json.Concat(newline).ToArray();
+        stream.WriteByte((byte)'\n');
+        return stream.ToArray();
     }
 
     private static void WriteRequest(Utf8JsonWriter writer, CassetteRequest request)

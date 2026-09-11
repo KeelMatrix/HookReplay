@@ -71,6 +71,153 @@ public sealed class HookReplayBehaviorTests
     }
 
     [Fact]
+    public async Task Invalid_mode_mutation_fails_closed_before_invoking_inner_handler()
+    {
+        string cassette = NewCassettePath();
+        var options = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Replay
+        };
+        var throwing = new ThrowingHandler();
+
+        try
+        {
+            using var client = new HttpClient(new HookReplayHandler(options, throwing));
+            options.Mode = (HookReplayMode)123;
+
+            ArgumentOutOfRangeException exception = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+                () => client.GetAsync("https://example.test/invalid-mode"));
+
+            Assert.Contains("Record or Replay", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(0, throwing.Calls);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Replay_mismatch_diagnostics_choose_the_closest_unconsumed_candidate()
+    {
+        string cassette = NewCassettePath();
+
+        try
+        {
+            var recordOptions = new HookReplayOptions(cassette)
+            {
+                Mode = HookReplayMode.Record
+            };
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                recordOptions,
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("recorded")
+                }))))
+            {
+                await recorder.PostAsync(
+                    "https://example.test/earlier",
+                    new StringContent("first"));
+                await recorder.PostAsync(
+                    "https://example.test/target",
+                    new StringContent("second"));
+            }
+
+            using var replay = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette),
+                new ThrowingHandler()));
+            using var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                "https://example.test/target")
+            {
+                Content = new StringContent("actual")
+            };
+
+            HookReplayMismatchException exception = await Assert.ThrowsAsync<HookReplayMismatchException>(
+                () => replay.SendAsync(request));
+
+            Assert.Contains("body fingerprint", exception.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("normalized URI component", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Cassette_size_limit_is_checked_before_replacement_and_preserves_valid_content()
+    {
+        string cassette = NewCassettePath();
+        int existingBodyLength = (int)CassetteFile.MaxCassetteBytes - 8192;
+        var existing = new CassetteInteraction
+        {
+            Request = new CassetteRequest
+            {
+                Method = "GET",
+                NormalizedUri = "https://example.test/existing",
+                Headers = new List<CassetteHeader>(),
+                MatchHeaders = new List<CassetteHeader>()
+            },
+            Response = new CassetteResponse
+            {
+                StatusCode = 200,
+                ReasonPhrase = "OK",
+                Version = HttpVersion.Version11,
+                Headers = new List<CassetteHeader>(),
+                BodyHeaders = new List<CassetteHeader>
+                {
+                    new("Content-Type", "text/plain; charset=utf-8")
+                },
+                Body = new CassetteBody
+                {
+                    ContentType = "text/plain; charset=utf-8",
+                    Text = new string('x', existingBodyLength)
+                }
+            }
+        };
+
+        try
+        {
+            await CassetteFile.WriteAsync(
+                cassette,
+                1,
+                new[] { existing },
+                CancellationToken.None);
+            byte[] before = await File.ReadAllBytesAsync(cassette);
+            Assert.InRange(before.LongLength, 1, CassetteFile.MaxCassetteBytes);
+
+            var recordOptions = new HookReplayOptions(cassette)
+            {
+                Mode = HookReplayMode.Record
+            };
+            using var recorder = new HttpClient(new HookReplayHandler(
+                recordOptions,
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(new string('n', 16 * 1024))
+                })));
+
+            HookReplaySizeLimitException exception = await Assert.ThrowsAsync<HookReplaySizeLimitException>(
+                () => recorder.GetAsync("https://example.test/new"));
+
+            Assert.Contains("32 MiB", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(before, await File.ReadAllBytesAsync(cassette));
+
+            IReadOnlyList<CassetteInteraction> readable = await CassetteFile.ReadAsync(
+                cassette,
+                1,
+                new HttpSanitizer(Array.Empty<ITextRedactor>()),
+                CancellationToken.None);
+            Assert.Single(readable);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
     public async Task Cassette_is_deterministic_and_does_not_persist_secrets()
     {
         string first = NewCassettePath();

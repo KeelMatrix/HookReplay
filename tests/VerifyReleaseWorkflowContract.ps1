@@ -51,6 +51,10 @@ function Assert-WorkflowContract {
     Assert-True ($validationJob -notmatch '(?m)^\s+id-token:\s*write\s*$') 'The validation job must not request OIDC identity tokens.'
     Assert-True ($publishJob -match '(?m)^\s+id-token:\s*write\s*$') 'Only the publication job must request OIDC identity tokens.'
     Assert-True ([regex]::Matches($activeText, '(?m)^\s+id-token:\s*write\s*$').Count -eq 1) 'Exactly one job may request OIDC identity tokens.'
+    $validationTimeout = Get-JobTimeoutMinutes $validationJob 'validate-release'
+    $publishTimeout = Get-JobTimeoutMinutes $publishJob 'publish'
+    Assert-True ($validationTimeout -ge 5 -and $validationTimeout -le 60) 'Validation must have a deliberate timeout from 5 through 60 minutes.'
+    Assert-True ($publishTimeout -ge 5 -and $publishTimeout -le 30) 'Publication must have a deliberate timeout from 5 through 30 minutes.'
     Assert-True ($publishJob -notmatch 'actions/checkout@') 'The publication job must not check out the repository.'
     Assert-True ($publishJob -notmatch '(?i)(?:dotnet\s+(?:restore|build|test|pack)|scripts[/\\])') 'The publication job must not execute product or build scripts.'
 
@@ -79,6 +83,20 @@ function Assert-WorkflowContract {
     Assert-True ($publishStep -notmatch '(?i)--no-symbols\b') 'The selected strategy relies on the adjacent validated symbol package.'
 
     Assert-True ($validationJob -match '- name: Inspect package artifacts before publication') 'Validation must fully inspect the exact packages before upload.'
+}
+
+function Get-JobTimeoutMinutes {
+    param(
+        [string] $JobText,
+        [string] $JobName
+    )
+
+    $match = [regex]::Match($JobText, '(?m)^[ \t]+timeout-minutes:[ \t]*(?<value>\d+)[ \t]*$')
+    if (-not $match.Success) {
+        throw "Release workflow contract failed: Job '$JobName' must declare timeout-minutes."
+    }
+
+    return [int] $match.Groups['value'].Value
 }
 
 Assert-True (Test-Path -LiteralPath $WorkflowPath) "Release workflow '$WorkflowPath' does not exist."
@@ -133,5 +151,45 @@ catch {
     $rejected = $true
 }
 Assert-True $rejected 'A publication job without the validation dependency must be rejected.'
+
+$missingValidationTimeoutWorkflow = $workflowText -replace '(?m)^    timeout-minutes:[ \t]*30[ \t]*\r?\n', ''
+$rejected = $false
+try {
+    Assert-WorkflowContract $missingValidationTimeoutWorkflow
+}
+catch {
+    $rejected = $true
+}
+Assert-True $rejected 'A validation job without a timeout must be rejected.'
+
+$missingPublishTimeoutWorkflow = $workflowText -replace '(?m)^    timeout-minutes:[ \t]*15[ \t]*\r?\n', ''
+$rejected = $false
+try {
+    Assert-WorkflowContract $missingPublishTimeoutWorkflow
+}
+catch {
+    $rejected = $true
+}
+Assert-True $rejected 'A publication job without a timeout must be rejected.'
+
+$unreasonableValidationTimeoutWorkflow = $workflowText -replace '(?m)^    timeout-minutes:[ \t]*30[ \t]*$', '    timeout-minutes: 1'
+$rejected = $false
+try {
+    Assert-WorkflowContract $unreasonableValidationTimeoutWorkflow
+}
+catch {
+    $rejected = $true
+}
+Assert-True $rejected 'An unreasonable validation timeout must be rejected.'
+
+$unreasonablePublishTimeoutWorkflow = $workflowText -replace '(?m)^    timeout-minutes:[ \t]*15[ \t]*$', '    timeout-minutes: 31'
+$rejected = $false
+try {
+    Assert-WorkflowContract $unreasonablePublishTimeoutWorkflow
+}
+catch {
+    $rejected = $true
+}
+Assert-True $rejected 'An unreasonable publication timeout must be rejected.'
 
 Write-Output 'Release workflow contract passed: validation and publication are separated, OIDC is scoped to publication, artifacts are revalidated, and one exact primary push publishes the adjacent validated symbol package.'
