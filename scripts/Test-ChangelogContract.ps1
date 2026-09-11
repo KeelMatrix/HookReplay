@@ -138,8 +138,8 @@ function Assert-ExactCommit([string] $Commit) {
 function Assert-VersionReferences([string] $Text, [string] $Path, [string] $ReleaseVersion) {
     $escapedPackageId = [regex]::Escape($PackageId)
     $patterns = @(
-        "(?im)dotnet\s+add\s+package\s+$escapedPackageId[^\r\n]*?--version\s+(?<version>[^\s`]+)",
-        ('(?im)dotnet\s+add\s+package\s+' + $escapedPackageId + '[^\r\n]*(?:(?:\\|`)[ \t]*)?\r?\n[ \t]*--version\s+(?<version>[^\s`]+)'),
+        "(?im)dotnet\s+add\s+package\s+$escapedPackageId[^\r\n]*?--version(?:\s+|=)(?<version>[^\s`]+)",
+        ('(?im)dotnet\s+add\s+package\s+' + $escapedPackageId + '[^\r\n]*(?:(?:\\|`)[ \t]*)?\r?\n[ \t]*--version(?:\s+|=)(?<version>[^\s`]+)'),
         ('(?im)PackageReference\s+Include\s*=\s*["'']' + $escapedPackageId + '["''][^\r\n]*?\bVersion\s*=\s*["''](?<version>[^"'']+)["'']')
     )
 

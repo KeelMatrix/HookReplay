@@ -21,7 +21,8 @@ function Invoke-Contract {
     param(
         [Parameter(Mandatory)] [string] $Root,
         [Parameter(Mandatory)] [string] $Tag,
-        [string] $ExpectedCommit = ""
+        [string] $ExpectedCommit = "",
+        [string] $ExpectedPackageVersion = "1.2.3"
     )
 
     $arguments = @(
@@ -32,7 +33,7 @@ function Invoke-Contract {
         "-ChangelogPath", (Join-Path $Root "CHANGELOG.md"),
         "-PackageVersionPath", (Join-Path $Root "Directory.Build.props"),
         "-VersionReferencePaths", (Join-Path $Root "README.md"),
-        "-ExpectedPackageVersion", "1.2.3"
+        "-ExpectedPackageVersion", $ExpectedPackageVersion
     )
     if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit)) {
         $arguments += @("-ExpectedCommit", $ExpectedCommit)
@@ -139,6 +140,31 @@ dotnet add package KeelMatrix.HookReplay \
     Write-Fixture $finalizedRoot "## [1.2.3] - $today" -InstallExample $consistentInstallExample
     $result = Invoke-Contract $finalizedRoot "v1.2.3"
     Assert-True ($result.ExitCode -eq 0) "A finalized target with consistent multiline package and install metadata must pass. Output: $($result.Output)"
+
+    $equalsInstallRoot = Join-Path $temporaryDirectory "equals-install"
+    $equalsInstallExample = @'
+dotnet add package KeelMatrix.HookReplay --version=1.2.3
+'@
+    Write-Fixture $equalsInstallRoot "## [1.2.3] - $today" -InstallExample $equalsInstallExample
+    $result = Invoke-Contract $equalsInstallRoot "v1.2.3"
+    Assert-True ($result.ExitCode -eq 0) "An equals-form install example with the release version must pass. Output: $($result.Output)"
+
+    $singleLineEqualsMismatchRoot = Join-Path $temporaryDirectory "single-line-equals-install-mismatch"
+    $singleLineEqualsMismatch = @'
+dotnet add package KeelMatrix.HookReplay --version=0.2.0
+'@
+    Write-Fixture $singleLineEqualsMismatchRoot "## [0.1.0] - $today" "0.1.0" "0.1.0" $singleLineEqualsMismatch
+    $result = Invoke-Contract $singleLineEqualsMismatchRoot "v0.1.0" -ExpectedPackageVersion "0.1.0"
+    Assert-True ($result.ExitCode -ne 0) "A single-line equals-form install-example/version mismatch must fail closed. Output: $($result.Output)"
+
+    $continuationEqualsMismatchRoot = Join-Path $temporaryDirectory "continuation-equals-install-mismatch"
+    $continuationEqualsMismatch = @'
+dotnet add package KeelMatrix.HookReplay \
+  --version=0.2.0
+'@
+    Write-Fixture $continuationEqualsMismatchRoot "## [0.1.0] - $today" "0.1.0" "0.1.0" $continuationEqualsMismatch
+    $result = Invoke-Contract $continuationEqualsMismatchRoot "v0.1.0" -ExpectedPackageVersion "0.1.0"
+    Assert-True ($result.ExitCode -ne 0) "A continuation-line equals-form install-example/version mismatch must fail closed. Output: $($result.Output)"
 
     $changelogMismatchRoot = Join-Path $temporaryDirectory "changelog-mismatch"
     Write-Fixture $changelogMismatchRoot "## [1.2.4] - $today"
