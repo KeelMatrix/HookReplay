@@ -79,6 +79,14 @@ function Get-FileText([string] $Path, [string] $Description) {
 
 function Get-CanonicalVersion([string] $Value, [string] $Description) {
     $version = $Value.Trim()
+    if ($version.Length -ge 2) {
+        $openingQuote = $version[0]
+        $closingQuote = $version[$version.Length - 1]
+        if ($openingQuote -in @([char]34, [char]39, [char]96) -and $closingQuote -eq $openingQuote) {
+            $version = $version.Substring(1, $version.Length - 2).Trim()
+        }
+    }
+
     $component = '(?:0|[1-9]\d{0,3}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-4])'
     if ($version -notmatch "^$component\.$component\.$component$") {
         Fail "$Description '$version' is not a canonical X.Y.Z release version."
@@ -138,8 +146,8 @@ function Assert-ExactCommit([string] $Commit) {
 function Assert-VersionReferences([string] $Text, [string] $Path, [string] $ReleaseVersion) {
     $escapedPackageId = [regex]::Escape($PackageId)
     $patterns = @(
-        "(?im)dotnet\s+add\s+package\s+$escapedPackageId[^\r\n]*?--version(?:\s+|=)(?<version>[^\s`]+)",
-        ('(?im)dotnet\s+add\s+package\s+' + $escapedPackageId + '[^\r\n]*(?:(?:\\|`)[ \t]*)?\r?\n[ \t]*--version(?:\s+|=)(?<version>[^\s`]+)'),
+        ('(?im)dotnet\s+add\s+package\s+' + $escapedPackageId + '[^\r\n]*?--version(?:\s+|=)(?<version>"[^"\r\n]*"|''[^''\r\n]*''|`[^`\r\n]*`|[^\s"''`<>]+)'),
+        ('(?im)dotnet\s+add\s+package\s+' + $escapedPackageId + '[^\r\n]*(?:(?:\\|`)[ \t]*)?\r?\n[ \t]*--version(?:\s+|=)(?<version>"[^"\r\n]*"|''[^''\r\n]*''|`[^`\r\n]*`|[^\s"''`<>]+)'),
         ('(?im)PackageReference\s+Include\s*=\s*["'']' + $escapedPackageId + '["''][^\r\n]*?\bVersion\s*=\s*["''](?<version>[^"'']+)["'']')
     )
 

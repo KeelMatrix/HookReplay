@@ -141,6 +141,21 @@ dotnet add package KeelMatrix.HookReplay \
     $result = Invoke-Contract $finalizedRoot "v1.2.3"
     Assert-True ($result.ExitCode -eq 0) "A finalized target with consistent multiline package and install metadata must pass. Output: $($result.Output)"
 
+    foreach ($quote in @([char]34, [char]39, [char]96)) {
+        $quotedVersion = [string]$quote + "1.2.3" + [string]$quote
+        $quotedRoot = Join-Path $temporaryDirectory ("quoted-install-" + [int]$quote)
+        $quotedInstallExample = "dotnet add package KeelMatrix.HookReplay --version $quotedVersion`n"
+        Write-Fixture $quotedRoot "## [1.2.3] - $today" -InstallExample $quotedInstallExample
+        $result = Invoke-Contract $quotedRoot "v1.2.3"
+        Assert-True ($result.ExitCode -eq 0) "A quoted install example using quote code $([int]$quote) must pass. Output: $($result.Output)"
+
+        $quotedMismatchRoot = Join-Path $temporaryDirectory ("quoted-install-mismatch-" + [int]$quote)
+        $quotedMismatchExample = "dotnet add package KeelMatrix.HookReplay --version $([string]$quote)1.2.4$([string]$quote)`n"
+        Write-Fixture $quotedMismatchRoot "## [1.2.3] - $today" -InstallExample $quotedMismatchExample
+        $result = Invoke-Contract $quotedMismatchRoot "v1.2.3"
+        Assert-True ($result.ExitCode -ne 0) "A quoted install-example/version mismatch using quote code $([int]$quote) must fail closed. Output: $($result.Output)"
+    }
+
     $equalsInstallRoot = Join-Path $temporaryDirectory "equals-install"
     $equalsInstallExample = @'
 dotnet add package KeelMatrix.HookReplay --version=1.2.3
