@@ -585,6 +585,145 @@ public sealed class HookReplayBehaviorTests
     }
 
     [Fact]
+    public async Task Query_encoding_stays_distinct_while_ordering_is_canonical()
+    {
+        string cassette = NewCassettePath();
+        var recordOptions = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Record
+        };
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                recordOptions,
+                new ResponseHandler(request => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        request.RequestUri!.Query.Contains("1+2", StringComparison.Ordinal)
+                            ? "literal-plus"
+                            : "ordered")
+                }))))
+            {
+                await recorder.GetAsync(
+                    "https://example.test/search?q=1+2&item=z&item=a");
+                await recorder.GetAsync("https://example.test/search?b=2&a=1");
+            }
+
+            string cassetteText = await File.ReadAllTextAsync(cassette);
+            Assert.Contains(
+                "\"normalizedUri\": \"https://example.test/search?item=a&item=z&q=",
+                cassetteText,
+                StringComparison.Ordinal);
+            Assert.Contains("?a=1&b=2", cassetteText, StringComparison.Ordinal);
+
+            var throwing = new ThrowingHandler();
+            using var replay = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette),
+                throwing));
+
+            await Assert.ThrowsAsync<HookReplayMismatchException>(
+                () => replay.GetAsync(
+                    "https://example.test/search?q=1%202&item=a&item=z"));
+
+            using (HttpResponseMessage plus = await replay.GetAsync(
+                       "https://example.test/search?item=a&item=z&q=1+2"))
+            {
+                Assert.Equal("literal-plus", await plus.Content.ReadAsStringAsync());
+            }
+
+            using (HttpResponseMessage ordered = await replay.GetAsync(
+                       "https://example.test/search?a=1&b=2"))
+            {
+                Assert.Equal("ordered", await ordered.Content.ReadAsStringAsync());
+            }
+
+            Assert.Contains("q=1%2B2", cassetteText, StringComparison.Ordinal);
+            Assert.Equal(0, throwing.Calls);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Custom_matcher_sees_symmetric_fingerprint_for_selected_sensitive_header()
+    {
+        string cassette = NewCassettePath();
+        const string recordedSecret = "recorded-authorization-secret";
+        const string differentSecret = "different-authorization-secret";
+        var recordOptions = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Record
+        };
+        recordOptions.MatchHeaders.Add("Authorization");
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                recordOptions,
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("authorized")
+                }))))
+            {
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    "https://example.test/secure");
+                request.Headers.TryAddWithoutValidation(
+                    "Authorization",
+                    "Bearer " + recordedSecret);
+                await recorder.SendAsync(request);
+            }
+
+            var matcher = new AuthorizationMatcher();
+            var replayOptions = new HookReplayOptions(cassette)
+            {
+                Mode = HookReplayMode.Replay,
+                RequestMatcher = matcher
+            };
+            replayOptions.MatchHeaders.Add("authorization");
+            var throwing = new ThrowingHandler();
+
+            using (var replay = new HttpClient(new HookReplayHandler(
+                replayOptions,
+                throwing)))
+            {
+                using var wrongRequest = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    "https://example.test/secure");
+                wrongRequest.Headers.TryAddWithoutValidation(
+                    "Authorization",
+                    "Bearer " + differentSecret);
+                await Assert.ThrowsAsync<HookReplayMismatchException>(
+                    () => replay.SendAsync(wrongRequest));
+                Assert.Equal(0, matcher.Calls);
+
+                using var matchingRequest = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    "https://example.test/secure");
+                matchingRequest.Headers.TryAddWithoutValidation(
+                    "Authorization",
+                    "Bearer " + recordedSecret);
+                using HttpResponseMessage response = await replay.SendAsync(matchingRequest);
+                Assert.Equal("authorized", await response.Content.ReadAsStringAsync());
+            }
+
+            Assert.Equal(1, matcher.Calls);
+            Assert.Equal(matcher.Actual, matcher.Recorded);
+            Assert.StartsWith("sha256:", matcher.Actual, StringComparison.Ordinal);
+            Assert.DoesNotContain(recordedSecret, matcher.Actual, StringComparison.Ordinal);
+            Assert.DoesNotContain(recordedSecret, matcher.Recorded, StringComparison.Ordinal);
+            Assert.Equal(0, throwing.Calls);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
     public async Task Body_sanitization_and_limits_are_explicit()
     {
         string cassette = NewCassettePath();
@@ -1677,6 +1816,23 @@ public sealed class HookReplayBehaviorTests
             return request.Headers.TryGetValue("x-variant", out string? actual)
                 && recordedRequest.Headers.TryGetValue("x-variant", out string? recorded)
                 && string.Equals(actual, recorded, StringComparison.Ordinal);
+        }
+    }
+
+    private sealed class AuthorizationMatcher : IHookReplayRequestMatcher
+    {
+        public int Calls { get; private set; }
+        public string Actual { get; private set; } = string.Empty;
+        public string Recorded { get; private set; } = string.Empty;
+
+        public bool Matches(HookReplayRequest request, HookReplayRequest recordedRequest)
+        {
+            Calls++;
+            request.Headers.TryGetValue("authorization", out string? actual);
+            recordedRequest.Headers.TryGetValue("Authorization", out string? recorded);
+            Actual = actual ?? string.Empty;
+            Recorded = recorded ?? string.Empty;
+            return string.Equals(Actual, Recorded, StringComparison.Ordinal);
         }
     }
 

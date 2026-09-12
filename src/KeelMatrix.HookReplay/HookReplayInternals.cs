@@ -644,8 +644,8 @@ internal static class UriNormalizer
         foreach (string part in rawQuery.Split(QuerySeparators, StringSplitOptions.RemoveEmptyEntries))
         {
             int equals = part.IndexOf('=');
-            string name = WebUtility.UrlDecode(equals < 0 ? part : part.Substring(0, equals)) ?? string.Empty;
-            string value = WebUtility.UrlDecode(equals < 0 ? string.Empty : part.Substring(equals + 1)) ?? string.Empty;
+            string name = Uri.UnescapeDataString(equals < 0 ? part : part.Substring(0, equals));
+            string value = Uri.UnescapeDataString(equals < 0 ? string.Empty : part.Substring(equals + 1));
             string normalizedValue = HttpSanitizer.IsSensitiveName(name)
                 ? "[REDACTED]"
                 : sanitizer.ApplyTextRedactors(value);
@@ -660,9 +660,9 @@ internal static class UriNormalizer
                 builder.Append('?');
             else
                 builder.Append('&');
-            builder.Append(WebUtility.UrlEncode(pair.Key));
+            builder.Append(Uri.EscapeDataString(pair.Key));
             builder.Append('=');
-            builder.Append(WebUtility.UrlEncode(pair.Value));
+            builder.Append(Uri.EscapeDataString(pair.Value));
         }
         return builder.ToString();
     }
@@ -741,6 +741,8 @@ internal static class RequestMatching
                 group => group.Key,
                 group => string.Join("\n", group.Select(header => header.Value)),
                 StringComparer.OrdinalIgnoreCase);
+        foreach (CassetteHeader header in request.MatchHeaders)
+            headers[header.Name] = header.Value;
         return new HookReplayRequest(
             request.Method,
             request.NormalizedUri,
