@@ -161,6 +161,11 @@ try {
     Assert-Equal $packageId $metadata.id "Package ID mismatch."
     Assert-Equal $Version $metadata.version "Package version mismatch."
     Assert-Equal "KeelMatrix" $metadata.authors "Package authors mismatch."
+    $copyright = $metadata.SelectSingleNode("n:copyright", $script:Namespace)
+    if ($null -eq $copyright) {
+        Fail "Package copyright metadata is missing."
+    }
+    Assert-Equal "KeelMatrix" $copyright.InnerText "Package copyright mismatch."
     Assert-Equal "expression" $metadata.license.type "Package license metadata type mismatch."
     Assert-Equal "MIT" $metadata.license.InnerText "Package license mismatch."
     Assert-Equal "README.md" $metadata.readme "README metadata mismatch."

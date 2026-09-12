@@ -17,8 +17,9 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(IsPackable)'=='true'">
+  <PropertyGroup Condition="'$(IsPackable)'!='false'">
     <Authors Condition="'$(Authors)'==''">KeelMatrix</Authors>
+    <Copyright Condition="'$(Copyright)'==''">KeelMatrix</Copyright>
     <PackageLicenseExpression Condition="'$(PackageLicenseExpression)'==''">MIT</PackageLicenseExpression>
     <RepositoryType Condition="'$(RepositoryType)'==''">git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
