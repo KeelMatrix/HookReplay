@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "normalizedUri": "https://example.test/v1/plain",
+        "bodyFingerprint": null,
+        "bodyContentType": null,
+        "body": null,
+        "headers": [],
+        "matchHeaders": []
+      },
+      "response": {
+        "statusCode": 200,
+        "reasonPhrase": "OK",
+        "version": "1.1",
+        "headers": [],
+        "bodyHeaders": [],
+        "body": {
+          "contentType": null,
+          "text": "synthetic body without a declared content type"
+        }
+      }
+    }
+  ]
+}

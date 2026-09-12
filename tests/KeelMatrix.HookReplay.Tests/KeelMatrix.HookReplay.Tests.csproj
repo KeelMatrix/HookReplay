@@ -19,5 +19,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Fixtures\schema-v1-basic.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\schema-v1-absent-content-type.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -1009,9 +1009,8 @@ public sealed class HookReplayBehaviorTests
 
     [Theory]
     [InlineData(null, "text/plain", "ordinary text")]
-    [InlineData("cf7e0cb3799813c75eb1ec05482a20a640dd269ce5c6479dbda0a88a0a0e01", null, "ordinary text")]
     [InlineData(null, null, "ordinary text")]
-    [InlineData("cf7e0cb3799813c75eb1ec05482a20a640dd269ce5c6479dbda0a88a0a0e01", "text/plain", null)]
+    [InlineData("cf7e0cb3799813c75eb1ec05482a20a640dd269ce5c6479dbda0a88a0a0a0e01", "text/plain", null)]
     [InlineData("0000000000000000000000000000000000000000000000000000000000000000", "text/plain", "ordinary text")]
     public async Task Persisted_request_body_relationships_must_be_consistent(
         string? bodyFingerprint,
@@ -1073,7 +1072,7 @@ public sealed class HookReplayBehaviorTests
         await File.WriteAllTextAsync(
             cassette,
             CassetteWithRequest(
-                "cf7e0cb3799813c75eb1ec05482a20a640dd269ce5c6479dbda0a88a0a0e01",
+                "cf7e0cb3799813c75eb1ec05482a20a640dd269ce5c6479dbda0a88a0a0a0e01",
                 "text/plain; charset=utf-8",
                 "ordinary text",
                 "[{\"name\":\"Content-Type\",\"value\":\"application/json\"}]"));

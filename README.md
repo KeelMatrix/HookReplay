@@ -56,7 +56,9 @@ using var client = new HttpClient(handler);
 
 ## Matching
 
-The default identity is HTTP method, normalized URI with query parameters sorted canonically, and a SHA-256 body fingerprint when a supported body is present. Headers are ignored unless selected:
+The default identity is HTTP method, normalized URI with query parameters sorted canonically, and a SHA-256 body fingerprint when a supported body is present. Path segments and query values are redacted before they become matching identity, so the same protected value always produces the same identity. Headers are ignored unless selected:
+
+Redaction is deliberately conservative: a path segment that looks like a protected token is redacted even when it is not a secret, so two requests that differ only in such a segment match the same interaction. Distinguish them with `MatchHeaders` or a custom matcher when that distinction matters.
 
 ~~~csharp
 options.MatchHeaders.Add("x-tenant-id");
@@ -82,7 +84,7 @@ Mismatch diagnostics rank unconsumed candidates by the number of mismatching dim
 
 Cassettes are HookReplay schema version 1 JSON. They are UTF-8 with a final LF, stable property order, sorted headers/query parameters, and no machine-specific paths. The total durable cassette, including all interactions, is limited to 32 MiB; Record rejects an oversized update before replacing the previous cassette, and Replay rejects a file beyond the same limit. Unsupported future schema versions fail with HookReplayUnsupportedCassetteVersionException; malformed files fail with HookReplayMalformedCassetteException. Replay revalidates persisted request and response content types, body representations, body fingerprints, and content-type headers before matching or returning a response, so unsupported or internally inconsistent content fails with a HookReplay-specific exception.
 
-Authorization, proxy authorization, cookies, set-cookie, API-key-like headers, sensitive query/form fields, common secret properties in JSON bodies, and response reason phrases are passed through the safe text-redaction boundary before persistence. The package also applies the built-in KeelMatrix.Redaction protections. Add project-specific protection without touching cassette-writing stages; configured redactors are applied to opaque URI query values, non-structural header values, response reason phrases, and text/JSON/form body values before either matching data or cassette bytes are created:
+Authorization, proxy authorization, cookies, set-cookie, API-key-like headers, sensitive query/form fields, common secret properties in JSON bodies, and response reason phrases are passed through the safe text-redaction boundary before persistence. The package also applies the built-in KeelMatrix.Redaction protections. Add project-specific protection without touching cassette-writing stages; configured redactors are applied to URI path segments and opaque query values, non-structural header values, response reason phrases, and text/JSON/form body values before either matching data or cassette bytes are created:
 
 ~~~csharp
 using KeelMatrix.Redaction;
@@ -96,13 +98,15 @@ Cassette paths may be relative or absolute, but parent-directory traversal and e
 
 ## Supported content and limits
 
-Empty content, text, JSON, and application/x-www-form-urlencoded content are supported for bounded request and response bodies. The default limit is 1 MiB per body and can be changed:
+Empty content, text, JSON, and application/x-www-form-urlencoded content are supported for bounded request and response bodies. Text is decoded and replayed with its declared `charset` when that charset is UTF-8, US-ASCII, ISO-8859-1, UTF-16, or UTF-32; text without a declared charset is treated as UTF-8, and any other declared charset fails closed instead of being reinterpreted. The default limit is 1 MiB per body and can be changed:
 
 ~~~csharp
 options.MaxBodyBytes = 256 * 1024;
 ~~~
 
 Oversized or unsupported content fails clearly with HookReplaySizeLimitException or HookReplayUnsupportedContentException. Streaming, multipart/binary canonicalization, WebSockets, gRPC, and server-sent events are outside this package.
+
+Replay returns the sanitized representation, so it never reuses a header that described the pre-sanitization body bytes: `Content-Length`, `Content-MD5`, `Content-Digest`, `Repr-Digest`, and `Digest` are dropped, and `Content-Length` is recalculated for the replayed bytes. A content type is replayed only when the recording declared one. Record mode still hands the real unsanitized response of the current exchange to the caller.
 
 ## Telemetry and privacy
 

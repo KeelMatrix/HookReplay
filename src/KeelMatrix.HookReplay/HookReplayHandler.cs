@@ -216,12 +216,12 @@ public sealed class HookReplayHandler : DelegatingHandler
             throw;
         }
 
+        CassetteResponse cassetteResponse = responseCapture.ToCassetteResponse();
         ReplaceResponseContent(response, responseCapture.RawBody, responseCapture.OriginalContentHeaders);
-
         var interaction = new CassetteInteraction
         {
             Request = capture.ToCassetteRequest(),
-            Response = responseCapture.ToCassetteResponse()
+            Response = cassetteResponse
         };
 
         try
@@ -306,11 +306,21 @@ public sealed class HookReplayHandler : DelegatingHandler
             }
 
             interactions.Add(interaction);
-            await CassetteFile.WriteAsync(
-                options.CassettePath,
-                CassetteSchemaVersion,
-                interactions,
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await CassetteFile.WriteAsync(
+                    options.CassettePath,
+                    CassetteSchemaVersion,
+                    interactions,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                // The interaction is only committed once the durable cassette write succeeds.
+                // Rolling back here keeps a failed append from becoming a replayable ghost.
+                interactions.Remove(interaction);
+                throw;
+            }
         }
         finally
         {
@@ -329,22 +339,32 @@ public sealed class HookReplayHandler : DelegatingHandler
             Version = recorded.Version
         };
 
-        var content = new ByteArrayContent(
-            recorded.Body is null
-                ? Array.Empty<byte>()
-                : Encoding.UTF8.GetBytes(recorded.Body.Text));
+        byte[] body = recorded.Body is null
+            ? Array.Empty<byte>()
+            : DeclaredTextEncoding
+                .Resolve(DeclaredTextEncoding.GetCharset(recorded.Body.ContentType))
+                .GetBytes(recorded.Body.Text);
+        var content = new ByteArrayContent(body);
         response.Content = content;
-        AddHeaders(response.Headers, recorded.Headers);
-        AddHeaders(content.Headers, recorded.BodyHeaders);
-        if (recorded.Body is not null && !string.IsNullOrWhiteSpace(recorded.Body.ContentType))
-            content.Headers.TryAddWithoutValidation("Content-Type", recorded.Body.ContentType);
+        AddReplayHeaders(response.Headers, recorded.Headers);
+        AddReplayHeaders(content.Headers, recorded.BodyHeaders);
         return response;
     }
 
-    private static void AddHeaders(HttpHeaders target, IReadOnlyList<CassetteHeader> headers)
+    private static void AddHeaders(HttpHeaders target, IEnumerable<CassetteHeader> headers)
     {
         foreach (CassetteHeader header in headers)
             target.TryAddWithoutValidation(header.Name, header.Value);
+    }
+
+    /// <summary>
+    /// Adds replayed headers while dropping values that described the pre-sanitization body.
+    /// </summary>
+    private static void AddReplayHeaders(HttpHeaders target, IEnumerable<CassetteHeader> headers)
+    {
+        AddHeaders(
+            target,
+            headers.Where(header => !HttpSanitizer.IsBodyDependentHeaderName(header.Name)));
     }
 
     private static void ReplaceRequestContent(
@@ -355,9 +375,11 @@ public sealed class HookReplayHandler : DelegatingHandler
         if (body is null)
             return;
 
+        HttpContent? superseded = request.Content;
         var replacement = new ByteArrayContent(body);
         AddHeaders(replacement.Headers, originalHeaders);
         request.Content = replacement;
+        superseded?.Dispose();
     }
 
     private static void ReplaceResponseContent(
@@ -368,9 +390,11 @@ public sealed class HookReplayHandler : DelegatingHandler
         if (body is null)
             return;
 
+        HttpContent? superseded = response.Content;
         var replacement = new ByteArrayContent(body);
         AddHeaders(replacement.Headers, originalHeaders);
         response.Content = replacement;
+        superseded?.Dispose();
     }
 
     /// <inheritdoc />
@@ -416,7 +440,14 @@ internal sealed class CassetteResponse
 
 internal sealed class CassetteBody
 {
-    public string ContentType { get; set; } = "text/plain; charset=utf-8";
+    /// <summary>
+    /// The declared content type, or <see langword="null"/> when the captured content had none.
+    /// </summary>
+    /// <remarks>
+    /// A null value means "no content type was declared", and replay must not synthesize one.
+    /// </remarks>
+    public string? ContentType { get; set; }
+
     public string Text { get; set; } = string.Empty;
 }
 

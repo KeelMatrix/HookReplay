@@ -118,7 +118,10 @@ internal sealed class ResponseCapture
         var responseHeaders = sanitizer.SanitizeHeaderList(response.Headers, null);
         var bodyHeaders = response.Content is null
             ? new List<CassetteHeader>()
-            : sanitizer.SanitizeHeaderList(response.Content.Headers, null);
+            : sanitizer.SanitizeHeaderList(
+                response.Content.Headers,
+                null,
+                dropBodyDependentHeaders: true);
         return new CassetteResponse
         {
             StatusCode = (int)response.StatusCode,
@@ -158,7 +161,7 @@ internal sealed class BodyCapture
     private BodyCapture(
         byte[] rawBytes,
         string text,
-        string contentType,
+        string? contentType,
         string fingerprint,
         IReadOnlyList<CassetteHeader> originalHeaders)
     {
@@ -171,7 +174,7 @@ internal sealed class BodyCapture
 
     public byte[] RawBytes { get; }
     public string Text { get; }
-    public string ContentType { get; }
+    public string? ContentType { get; }
     public string Fingerprint { get; }
     public IReadOnlyList<CassetteHeader> OriginalHeaders { get; }
 
@@ -216,15 +219,17 @@ internal sealed class BodyCapture
                 "The HTTP content could not be captured safely.", exception);
         }
 
-        string contentType;
+        string? contentType;
         string mediaType;
+        Encoding encoding;
         try
         {
             MediaTypeHeaderValue? contentTypeHeader = content.Headers.ContentType;
-            contentType = sanitizer.SanitizeHeaderValue(
-                "Content-Type",
-                contentTypeHeader?.ToString() ?? "text/plain; charset=utf-8");
             mediaType = contentTypeHeader?.MediaType ?? "text/plain";
+            encoding = DeclaredTextEncoding.Resolve(contentTypeHeader?.CharSet);
+            contentType = contentTypeHeader is null
+                ? null
+                : sanitizer.SanitizeHeaderValue("Content-Type", contentTypeHeader.ToString());
         }
         catch (ObjectDisposedException exception)
         {
@@ -239,19 +244,10 @@ internal sealed class BodyCapture
         if (bytes.Length == 0)
             return null;
 
-        string rawText;
-        try
-        {
-            rawText = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)
-                .GetString(bytes);
-        }
-        catch (Exception exception)
-        {
-            throw new HookReplayUnsupportedContentException(
-                "The HTTP content is not valid UTF-8 text.", exception);
-        }
+        string rawText = DeclaredTextEncoding.Decode(encoding, bytes);
 
         string sanitized = sanitizer.SanitizeBody(rawText, mediaType);
+        DeclaredTextEncoding.EnsureEncodable(encoding, sanitized, "The sanitized HTTP body");
         return new BodyCapture(
             bytes,
             sanitized,
@@ -277,6 +273,123 @@ internal sealed class BodyCapture
         foreach (byte valueByte in bytes)
             builder.Append(valueByte.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
         return builder.ToString();
+    }
+}
+
+/// <summary>
+/// Resolves the text encoding used for captured and replayed bodies.
+/// </summary>
+/// <remarks>
+/// A declared <c>charset</c> is honored when it names one of the bounded supported
+/// encodings; undeclared text is UTF-8. Unsupported declared charsets fail closed
+/// instead of being silently reinterpreted.
+/// </remarks>
+internal static class DeclaredTextEncoding
+{
+    private static readonly Encoding Default =
+        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    public static Encoding Resolve(string? charset)
+    {
+        if (charset is null || charset.Trim().Length == 0)
+            return Default;
+
+        string name = charset.Trim().Trim('"').ToLowerInvariant();
+        switch (name)
+        {
+            case "":
+            case "utf-8":
+            case "utf8":
+                return Default;
+            case "us-ascii":
+            case "ascii":
+                return FromCodePage(20127, charset);
+            case "iso-8859-1":
+            case "iso8859-1":
+            case "latin1":
+            case "latin-1":
+                return FromCodePage(28591, charset);
+            case "utf-16":
+            case "utf-16le":
+            case "utf16":
+            case "unicode":
+                return new UnicodeEncoding(bigEndian: false, byteOrderMark: false, throwOnInvalidBytes: true);
+            case "utf-16be":
+            case "utf16be":
+                return new UnicodeEncoding(bigEndian: true, byteOrderMark: false, throwOnInvalidBytes: true);
+            case "utf-32":
+            case "utf-32le":
+            case "utf32":
+                return new UTF32Encoding(bigEndian: false, byteOrderMark: false, throwOnInvalidCharacters: true);
+            case "utf-32be":
+            case "utf32be":
+                return new UTF32Encoding(bigEndian: true, byteOrderMark: false, throwOnInvalidCharacters: true);
+            default:
+                throw new HookReplayUnsupportedContentException(
+                    "The declared charset '" + charset + "' is not supported. HookReplay supports UTF-8 (the default), " +
+                    "US-ASCII, ISO-8859-1, UTF-16, and UTF-32 text content.");
+        }
+    }
+
+    public static string? GetCharset(string? contentType)
+    {
+        if (contentType is null || contentType.Trim().Length == 0)
+            return null;
+
+        return MediaTypeHeaderValue.TryParse(contentType, out MediaTypeHeaderValue? parsed) &&
+            parsed is not null
+            ? parsed.CharSet
+            : null;
+    }
+
+    public static string Decode(Encoding encoding, byte[] bytes)
+    {
+        try
+        {
+            return encoding.GetString(bytes);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new HookReplayUnsupportedContentException(
+                "The HTTP content is not valid " + encoding.WebName + " text.", exception);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new HookReplayUnsupportedContentException(
+                "The HTTP content is not valid " + encoding.WebName + " text.", exception);
+        }
+    }
+
+    public static void EnsureEncodable(Encoding encoding, string text, string subject)
+    {
+        try
+        {
+            _ = encoding.GetBytes(text);
+        }
+        catch (EncoderFallbackException exception)
+        {
+            throw new HookReplayUnsupportedContentException(
+                subject + " cannot be represented as " + encoding.WebName +
+                " text. Declare UTF-8 or a charset that can represent the recorded content.",
+                exception);
+        }
+    }
+
+    private static Encoding FromCodePage(int codePage, string charset)
+    {
+        try
+        {
+            return Encoding.GetEncoding(
+                codePage,
+                EncoderFallback.ExceptionFallback,
+                DecoderFallback.ExceptionFallback);
+        }
+        catch (Exception exception)
+        {
+            throw new HookReplayUnsupportedContentException(
+                "The declared charset '" + charset + "' is not supported on this platform.",
+                exception);
+        }
     }
 }
 
@@ -419,16 +532,33 @@ internal sealed class HttpSanitizer
 
     public List<CassetteHeader> SanitizeHeaderList(
         HttpHeaders headers,
-        HttpHeaders? contentHeaders)
+        HttpHeaders? contentHeaders,
+        bool dropBodyDependentHeaders = false)
     {
         var result = new List<CassetteHeader>();
-        AddSanitizedHeaders(result, headers);
+        AddSanitizedHeaders(result, headers, dropBodyDependentHeaders);
         if (contentHeaders is not null)
-            AddSanitizedHeaders(result, contentHeaders);
+            AddSanitizedHeaders(result, contentHeaders, dropBodyDependentHeaders);
         return result
             .OrderBy(header => header.Name, StringComparer.Ordinal)
             .ThenBy(header => header.Value, StringComparer.Ordinal)
             .ToList();
+    }
+
+    /// <summary>
+    /// Identifies headers whose value describes the exact body bytes.
+    /// </summary>
+    /// <remarks>
+    /// Persisted and replayed bodies are the sanitized representation, so a recorded
+    /// length or integrity hash is stale and must not be replayed with a changed body.
+    /// </remarks>
+    public static bool IsBodyDependentHeaderName(string name)
+    {
+        return name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Content-MD5", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Content-Digest", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Repr-Digest", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Digest", StringComparison.OrdinalIgnoreCase);
     }
 
     public Dictionary<string, string> CreateMatchHeaders(
@@ -592,10 +722,14 @@ internal sealed class HttpSanitizer
 
     private void AddSanitizedHeaders(
         List<CassetteHeader> destination,
-        HttpHeaders source)
+        HttpHeaders source,
+        bool dropBodyDependentHeaders)
     {
         foreach (KeyValuePair<string, IEnumerable<string>> pair in source)
         {
+            if (dropBodyDependentHeaders && IsBodyDependentHeaderName(pair.Key))
+                continue;
+
             foreach (string value in pair.Value)
             {
                 destination.Add(new CassetteHeader(
@@ -619,6 +753,7 @@ internal sealed class HttpSanitizer
 internal static class UriNormalizer
 {
     private static readonly char[] QuerySeparators = { '&' };
+    private static readonly char[] SegmentSeparators = { '/' };
 
     public static string Normalize(Uri? uri, HttpSanitizer sanitizer)
     {
@@ -628,11 +763,9 @@ internal static class UriNormalizer
         string scheme = uri.Scheme.ToLowerInvariant();
         string host = uri.Host.ToLowerInvariant();
         string port = uri.IsDefaultPort ? string.Empty : ":" + uri.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string path = uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
-        if (path.Length == 0)
-            path = "/";
-        else if (path[0] != '/')
-            path = "/" + path;
+        string path = NormalizePath(
+            uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped),
+            sanitizer);
 
         var builder = new StringBuilder(scheme)
             .Append("://")
@@ -664,6 +797,42 @@ internal static class UriNormalizer
             builder.Append('=');
             builder.Append(Uri.EscapeDataString(pair.Value));
         }
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Sanitizes each path segment before the URI becomes matching identity or cassette data.
+    /// </summary>
+    /// <remarks>
+    /// Segments are decoded before redaction so a percent-encoded protected value cannot
+    /// hide from the redaction boundary, then re-encoded with the canonical escape used for
+    /// query values so equivalent raw and escaped inputs normalize identically.
+    /// </remarks>
+    private static string NormalizePath(string escapedPath, HttpSanitizer sanitizer)
+    {
+        if (escapedPath.Length == 0)
+            return "/";
+
+        string[] segments = escapedPath.Split(SegmentSeparators);
+        var builder = new StringBuilder(escapedPath.Length);
+        for (int index = 0; index < segments.Length; index++)
+        {
+            if (index > 0)
+                builder.Append('/');
+
+            if (segments[index].Length == 0)
+                continue;
+
+            string decoded = Uri.UnescapeDataString(segments[index]);
+            builder.Append(Uri.EscapeDataString(sanitizer.ApplyTextRedactors(decoded)));
+        }
+
+        if (builder.Length == 0)
+            return "/";
+
+        if (builder[0] != '/')
+            builder.Insert(0, '/');
+
         return builder.ToString();
     }
 
@@ -1062,19 +1231,17 @@ internal static class CassetteFile
             return null;
         return new CassetteBody
         {
-            ContentType = RequiredString(body, "contentType"),
+            ContentType = OptionalString(body, "contentType"),
             Text = RequiredString(body, "text")
         };
     }
 
     private static void ValidateRequestContent(CassetteRequest request)
     {
-        MediaTypeHeaderValue? bodyContentType = request.BodyContentType is null
-            ? null
-            : ParsePersistedContentType(
-                request.BodyContentType,
-                "request body content type",
-                "request");
+        MediaTypeHeaderValue? bodyContentType = ParsePersistedContentType(
+            request.BodyContentType,
+            "request body content type",
+            "request");
         MediaTypeHeaderValue? headerContentType = ParseContentTypeHeader(
             request.Headers,
             "request",
@@ -1099,12 +1266,6 @@ internal static class CassetteFile
             return;
         }
 
-        if (bodyContentType is null)
-        {
-            throw new HookReplayMalformedCassetteException(
-                "Cassette request body requires a body content type.");
-        }
-
         if (request.BodyFingerprint is null)
         {
             throw new HookReplayMalformedCassetteException(
@@ -1126,17 +1287,19 @@ internal static class CassetteFile
                 "Cassette request body fingerprint does not match the persisted body.");
         }
 
-        ValidatePersistedBodyText(request.Body, bodyContentType.MediaType!, "request");
+        if (bodyContentType is not null)
+        {
+            ValidatePersistedBodyText(request.Body, bodyContentType.MediaType!, "request");
+            ValidatePersistedTextEncoding(request.Body, bodyContentType, "request");
+        }
     }
 
     private static void ValidateResponseContent(CassetteResponse response)
     {
-        MediaTypeHeaderValue? bodyContentType = response.Body is null
-            ? null
-            : ParsePersistedContentType(
-                response.Body.ContentType,
-                "response body content type",
-                "response");
+        MediaTypeHeaderValue? bodyContentType = ParsePersistedContentType(
+            response.Body?.ContentType,
+            "response body content type",
+            "response");
         MediaTypeHeaderValue? headerContentType = ParseContentTypeHeader(
             response.BodyHeaders,
             "response body",
@@ -1149,6 +1312,7 @@ internal static class CassetteFile
         }
 
         ValidatePersistedBodyText(response.Body.Text, bodyContentType.MediaType!, "response");
+        ValidatePersistedTextEncoding(response.Body.Text, bodyContentType, "response");
     }
 
     private static MediaTypeHeaderValue? ParseContentTypeHeader(
@@ -1229,11 +1393,14 @@ internal static class CassetteFile
         }
     }
 
-    private static MediaTypeHeaderValue ParsePersistedContentType(
-        string value,
+    private static MediaTypeHeaderValue? ParsePersistedContentType(
+        string? value,
         string propertyName,
         string owner)
     {
+        if (value is null)
+            return null;
+
         if (!MediaTypeHeaderValue.TryParse(value, out MediaTypeHeaderValue? contentType) ||
             contentType is null ||
             string.IsNullOrWhiteSpace(contentType.MediaType))
@@ -1249,7 +1416,19 @@ internal static class CassetteFile
                 "' is not supported. HookReplay supports text, JSON, form, and empty content.");
         }
 
+        _ = DeclaredTextEncoding.Resolve(contentType.CharSet);
         return contentType;
+    }
+
+    private static void ValidatePersistedTextEncoding(
+        string text,
+        MediaTypeHeaderValue contentType,
+        string owner)
+    {
+        DeclaredTextEncoding.EnsureEncodable(
+            DeclaredTextEncoding.Resolve(contentType.CharSet),
+            text,
+            "The cassette " + owner + " body text");
     }
 
     private static bool IsFingerprint(string value)
