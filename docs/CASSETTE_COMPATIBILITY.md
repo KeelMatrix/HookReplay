@@ -18,7 +18,7 @@ URI path segments and query values are redacted before they become `normalizedUr
 
 Text bodies are stored as decoded text. The declared `charset` is preserved in the content type and is honored on replay for UTF-8, US-ASCII, ISO-8859-1, UTF-16, and UTF-32; text without a declared charset is UTF-8 and any other declared charset is rejected. A content type is optional: `request.bodyContentType` and response `body.contentType` may be `null` when the captured content declared no content type, and replay never synthesizes one.
 
-Persisted and replayed bodies are the sanitized representation. Headers that describe the exact pre-sanitization body bytes (`Content-Length`, `Content-MD5`, `Content-Digest`, `Repr-Digest`, and `Digest`) are therefore not persisted or replayed, and replay recalculates the body length.
+Persisted and replayed bodies are the sanitized representation. Headers that describe the exact pre-sanitization body bytes or their transfer framing (`Content-Length`, `Content-MD5`, `Content-Digest`, `Repr-Digest`, `Digest`, and `Transfer-Encoding`) are therefore never persisted or replayed, in message-level and content header collections alike, and replay recalculates the body length.
 
 Appending an interaction is transactional: an interaction becomes part of replay state only after the durable cassette write succeeds, so a failed write cannot leave a ghost recording behind.
 

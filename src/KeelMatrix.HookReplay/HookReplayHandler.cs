@@ -216,7 +216,19 @@ public sealed class HookReplayHandler : DelegatingHandler
             throw;
         }
 
-        CassetteResponse cassetteResponse = responseCapture.ToCassetteResponse();
+        CassetteResponse cassetteResponse;
+        try
+        {
+            cassetteResponse = responseCapture.ToCassetteResponse();
+        }
+        catch
+        {
+            // Sanitizing the captured response can fail, so the response and its content are
+            // owned here until the cassette data has been built from them.
+            response.Dispose();
+            throw;
+        }
+
         ReplaceResponseContent(response, responseCapture.RawBody, responseCapture.OriginalContentHeaders);
         var interaction = new CassetteInteraction
         {

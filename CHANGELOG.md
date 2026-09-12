@@ -9,9 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - Redact URI path segments before they become matching identity, custom-matcher input, or cassette data, including percent-encoded values.
-- Dispose superseded request and response content after capture so replaced content is neither leaked nor reused, including on capture and persistence failures.
+- Dispose superseded request and response content after capture so replaced content is neither leaked nor reused, including on capture, sanitization, and persistence failures.
 - Honor a supported declared text `charset` instead of decoding and replaying every text body as UTF-8; unsupported declared charsets fail closed.
-- Do not synthesize a response `Content-Type` that was never captured, and do not replay body-length or integrity headers that describe the pre-sanitization body.
+- Do not synthesize a response `Content-Type` that was never captured, and neither persist nor replay body-length, integrity-digest, or transfer-framing headers that describe the pre-sanitization body, including in the message-level header collections.
 - Roll back the in-memory interaction list when a durable cassette append fails, so a failed interaction cannot later become a replayable ghost recording.
 
 ### Compatibility

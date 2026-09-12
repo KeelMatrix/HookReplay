@@ -64,7 +64,7 @@ Redaction is deliberately conservative: a path segment that looks like a protect
 options.MatchHeaders.Add("x-tenant-id");
 ~~~
 
-Selected headers are sanitized before they are persisted or used in diagnostics. Sensitive selected headers use one-way fingerprints. For bounded custom matching, implement IHookReplayRequestMatcher; it receives sanitized request descriptions only:
+Selected headers are sanitized before they are persisted or used in diagnostics. Sensitive selected headers use one-way fingerprints. Headers that describe the pre-sanitization body or its framing (`Content-Length`, `Content-MD5`, `Content-Digest`, `Repr-Digest`, `Digest`, and `Transfer-Encoding`) cannot be selected for matching; they are dropped from the persisted request identity. For bounded custom matching, implement IHookReplayRequestMatcher; it receives sanitized request descriptions only:
 
 ~~~csharp
 options.RequestMatcher = new TenantMatcher();
@@ -106,7 +106,7 @@ options.MaxBodyBytes = 256 * 1024;
 
 Oversized or unsupported content fails clearly with HookReplaySizeLimitException or HookReplayUnsupportedContentException. Streaming, multipart/binary canonicalization, WebSockets, gRPC, and server-sent events are outside this package.
 
-Replay returns the sanitized representation, so it never reuses a header that described the pre-sanitization body bytes: `Content-Length`, `Content-MD5`, `Content-Digest`, `Repr-Digest`, and `Digest` are dropped, and `Content-Length` is recalculated for the replayed bytes. A content type is replayed only when the recording declared one. Record mode still hands the real unsanitized response of the current exchange to the caller.
+Replay returns the sanitized representation, so it never persists or reuses a header that described the pre-sanitization body bytes or their framing: `Content-Length`, `Content-MD5`, `Content-Digest`, `Repr-Digest`, `Digest`, and `Transfer-Encoding` are dropped from both message-level and content headers, and `Content-Length` is recalculated for the replayed bytes. A content type is replayed only when the recording declared one. Record mode still hands the real unsanitized response of the current exchange to the caller.
 
 ## Telemetry and privacy
 

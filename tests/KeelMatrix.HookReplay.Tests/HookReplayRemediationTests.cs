@@ -389,6 +389,130 @@ public sealed class HookReplayRemediationTests
     }
 
     [Fact]
+    public async Task Message_level_body_dependent_headers_are_never_persisted_or_replayed()
+    {
+        string cassette = NewCassettePath();
+        const string rawJson = """{"access_token":"raw-secret-value","ok":true}""";
+        const string sanitizedJson = """{"access_token":"[REDACTED]","ok":true}""";
+        const string uri = "https://example.test/message-level-headers";
+        byte[] rawBytes = Encoding.UTF8.GetBytes(rawJson);
+        string rawDigest = Convert.ToBase64String(SHA256.HashData(rawBytes));
+        string requestDigest = "sha-256=" + rawDigest;
+        string responseDigest = "sha-256=:" + rawDigest + ":";
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ =>
+                {
+                    var content = new ByteArrayContent(rawBytes);
+                    content.Headers.ContentType = new MediaTypeHeaderValue("application/json")
+                    {
+                        CharSet = "utf-8"
+                    };
+                    content.Headers.ContentLength = rawBytes.LongLength;
+                    content.Headers.TryAddWithoutValidation(
+                        "Content-MD5",
+                        Convert.ToBase64String(MD5.HashData(rawBytes)));
+                    var response = new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = content
+                    };
+                    response.Headers.TryAddWithoutValidation("Digest", responseDigest);
+                    response.Headers.TryAddWithoutValidation("Content-Digest", responseDigest);
+                    response.Headers.TryAddWithoutValidation("Transfer-Encoding", "chunked");
+                    return response;
+                }))))
+            {
+                using var request = CreateJsonRequest(uri, rawBytes, requestDigest);
+                using HttpResponseMessage response = await recorder.SendAsync(request);
+                Assert.Equal(rawJson, await response.Content.ReadAsStringAsync());
+            }
+
+            string cassetteText = await File.ReadAllTextAsync(cassette);
+            Assert.DoesNotContain(rawDigest, cassetteText, StringComparison.Ordinal);
+            Assert.DoesNotContain(requestDigest, cassetteText, StringComparison.Ordinal);
+            Assert.DoesNotContain(responseDigest, cassetteText, StringComparison.Ordinal);
+            Assert.DoesNotContain("Transfer-Encoding", cassetteText, StringComparison.Ordinal);
+
+            IReadOnlyList<CassetteInteraction> persisted = await CassetteFile.ReadAsync(
+                cassette,
+                1,
+                new HttpSanitizer(Array.Empty<ITextRedactor>()),
+                CancellationToken.None);
+            Assert.Equal(sanitizedJson, persisted[0].Response.Body!.Text);
+            Assert.DoesNotContain(persisted[0].Request.Headers, IsBodyDependent);
+            Assert.DoesNotContain(persisted[0].Request.MatchHeaders, IsBodyDependent);
+            Assert.DoesNotContain(persisted[0].Response.Headers, IsBodyDependent);
+            Assert.DoesNotContain(persisted[0].Response.BodyHeaders, IsBodyDependent);
+
+            var throwing = new ThrowingHandler();
+            using var replay = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette),
+                throwing));
+            using var replayRequest = CreateJsonRequest(uri, rawBytes, requestDigest);
+            using HttpResponseMessage replayed = await replay.SendAsync(replayRequest);
+
+            Assert.Equal(sanitizedJson, await replayed.Content.ReadAsStringAsync());
+            Assert.Equal(
+                Encoding.UTF8.GetBytes(sanitizedJson).LongLength,
+                replayed.Content.Headers.ContentLength);
+            Assert.False(replayed.Headers.Contains("Digest"));
+            Assert.False(replayed.Headers.Contains("Content-Digest"));
+            Assert.False(replayed.Headers.Contains("Transfer-Encoding"));
+            Assert.False(replayed.Content.Headers.Contains("Content-MD5"));
+            Assert.Equal(0, throwing.Calls);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Record_disposes_response_content_when_cassette_response_construction_fails()
+    {
+        string cassette = NewCassettePath();
+        const string sentinel = "reason-phrase-redaction-sentinel";
+        var responseContent = TrackedContent.WithContentType("response body", "text/plain");
+        HttpResponseMessage? created = null;
+        var options = new HookReplayOptions(cassette) { Mode = HookReplayMode.Record };
+        options.Redactors.Add(new ThrowingSentinelRedactor(sentinel));
+
+        try
+        {
+            using var recorder = new HttpClient(new HookReplayHandler(
+                options,
+                new ResponseHandler(_ =>
+                {
+                    created = new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        ReasonPhrase = sentinel,
+                        Content = responseContent
+                    };
+                    return created;
+                })));
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                "https://example.test/reason-phrase");
+
+            await Assert.ThrowsAsync<HookReplayUnsupportedContentException>(
+                () => recorder.SendAsync(request));
+
+            Assert.False(File.Exists(cassette));
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+
+        Assert.NotNull(created);
+        Assert.Equal(1, responseContent.Disposals);
+        Assert.Throws<ObjectDisposedException>(() => { _ = created!.Content.ReadAsByteArrayAsync(); });
+    }
+
+    [Fact]
     public async Task Replay_does_not_synthesize_a_missing_content_type()
     {
         string cassette = NewCassettePath();
@@ -681,6 +805,27 @@ public sealed class HookReplayRemediationTests
         return builder.ToString();
     }
 
+    private static bool IsBodyDependent(CassetteHeader header)
+    {
+        return HttpSanitizer.IsBodyDependentHeaderName(header.Name);
+    }
+
+    private static HttpRequestMessage CreateJsonRequest(string uri, byte[] body, string digest)
+    {
+        var content = new ByteArrayContent(body);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json")
+        {
+            CharSet = "utf-8"
+        };
+        var request = new HttpRequestMessage(HttpMethod.Post, uri)
+        {
+            Content = content
+        };
+        request.Headers.TryAddWithoutValidation("Digest", digest);
+        request.Headers.TryAddWithoutValidation("Content-Digest", digest);
+        return request;
+    }
+
     private static string NewCassettePath()
     {
         return Path.Combine(
@@ -708,6 +853,24 @@ public sealed class HookReplayRemediationTests
         public string Redact(string input)
         {
             return input.Replace(sentinel, replacement, StringComparison.Ordinal);
+        }
+    }
+
+    private sealed class ThrowingSentinelRedactor : ITextRedactor
+    {
+        private readonly string sentinel;
+
+        public ThrowingSentinelRedactor(string sentinel)
+        {
+            this.sentinel = sentinel;
+        }
+
+        public string Redact(string input)
+        {
+            if (input.Contains(sentinel, StringComparison.Ordinal))
+                throw new InvalidOperationException("The configured redactor refused this value.");
+
+            return input;
         }
     }
 

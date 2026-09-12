@@ -65,7 +65,8 @@ internal sealed class RequestCapture
             sanitizer).ConfigureAwait(false);
         List<CassetteHeader> persistedHeaders = sanitizer.SanitizeHeaderList(
             request.Headers,
-            request.Content?.Headers);
+            request.Content?.Headers,
+            dropBodyDependentHeaders: true);
         Dictionary<string, string> headers = sanitizer.SanitizeHeaders(
             request.Headers,
             request.Content?.Headers);
@@ -115,7 +116,10 @@ internal sealed class ResponseCapture
 
     public CassetteResponse ToCassetteResponse()
     {
-        var responseHeaders = sanitizer.SanitizeHeaderList(response.Headers, null);
+        var responseHeaders = sanitizer.SanitizeHeaderList(
+            response.Headers,
+            null,
+            dropBodyDependentHeaders: true);
         var bodyHeaders = response.Content is null
             ? new List<CassetteHeader>()
             : sanitizer.SanitizeHeaderList(
@@ -546,11 +550,12 @@ internal sealed class HttpSanitizer
     }
 
     /// <summary>
-    /// Identifies headers whose value describes the exact body bytes.
+    /// Identifies headers whose value describes the exact body bytes or their transfer framing.
     /// </summary>
     /// <remarks>
-    /// Persisted and replayed bodies are the sanitized representation, so a recorded
-    /// length or integrity hash is stale and must not be replayed with a changed body.
+    /// Persisted and replayed bodies are the sanitized representation, so a recorded length,
+    /// integrity hash, or transfer-framing value is stale for the replayed message and must be
+    /// neither persisted nor replayed alongside a changed body.
     /// </remarks>
     public static bool IsBodyDependentHeaderName(string name)
     {
@@ -558,7 +563,8 @@ internal sealed class HttpSanitizer
             || name.Equals("Content-MD5", StringComparison.OrdinalIgnoreCase)
             || name.Equals("Content-Digest", StringComparison.OrdinalIgnoreCase)
             || name.Equals("Repr-Digest", StringComparison.OrdinalIgnoreCase)
-            || name.Equals("Digest", StringComparison.OrdinalIgnoreCase);
+            || name.Equals("Digest", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase);
     }
 
     public Dictionary<string, string> CreateMatchHeaders(
@@ -711,6 +717,11 @@ internal sealed class HttpSanitizer
     {
         foreach (KeyValuePair<string, IEnumerable<string>> pair in source)
         {
+            // Header maps feed matching identity, custom-matcher input, and cassette data, so a
+            // value that describes the pre-sanitization body never enters them.
+            if (IsBodyDependentHeaderName(pair.Key))
+                continue;
+
             if (!destination.TryGetValue(pair.Key, out List<string>? values))
             {
                 values = new List<string>();
