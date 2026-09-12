@@ -22,7 +22,7 @@ function Fail([string] $Message) {
 }
 
 function Assert-Equal([object] $Expected, [object] $Actual, [string] $Message) {
-    if ($Expected -ne $Actual) {
+    if ($Expected -cne $Actual) {
         Fail "$Message Expected '$Expected', actual '$Actual'."
     }
 }

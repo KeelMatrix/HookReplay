@@ -122,6 +122,10 @@ jobs:
           -p:Version=${{ steps.package-version.outputs.version }}
           --output ./artifacts/packages
 
+      - name: Verify package inspection copyright contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyPackageInspectionContract.ps1 -PackageDirectory ./artifacts/packages -Version ${{ steps.package-version.outputs.version }} -ExpectedCommit "${{ github.sha }}"
+
       - name: Inspect package artifacts
         shell: pwsh
         run: pwsh -NoProfile -File scripts/InspectPackage.ps1 -PackageDirectory ./artifacts/packages -Version ${{ steps.package-version.outputs.version }} -ExpectedCommit "${{ github.sha }}"
