@@ -117,7 +117,7 @@ See the [cassette compatibility policy](https://github.com/KeelMatrix/HookReplay
 ## Troubleshooting
 
 - **Cassette miss:** confirm the method, canonical URI/query, body, and any selected matching headers are the same. Replay never calls the network to fill a miss.
-- **Malformed or unsupported cassette:** check `schemaVersion`, required fields, valid JSON/content types, and the [compatibility policy](docs/CASSETTE_COMPATIBILITY.md). Future schema versions are rejected instead of partially read.
+- **Malformed or unsupported cassette:** check `schemaVersion`, required fields, valid JSON/content types, and the [compatibility policy](https://github.com/KeelMatrix/HookReplay/blob/main/docs/CASSETTE_COMPATIBILITY.md). Future schema versions are rejected instead of partially read.
 - **Unsupported or oversized content:** use empty, text, JSON, or URL-form content within `MaxBodyBytes`; streaming, multipart, and binary content are intentionally rejected.
 - **Unsafe cassette path:** choose a file path without parent-directory traversal and without symbolic-link or reparse-point components.
 - **Telemetry opt-out:** set `KEELMATRIX_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or use the shared telemetry repository opt-out file.
