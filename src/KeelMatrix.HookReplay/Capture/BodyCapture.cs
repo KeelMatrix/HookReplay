@@ -124,12 +124,3 @@ internal sealed class BodyCapture
         return builder.ToString();
     }
 }
-
-/// <summary>
-/// Resolves the text encoding used for captured and replayed bodies.
-/// </summary>
-/// <remarks>
-/// A declared <c>charset</c> is honored when it names one of the bounded supported
-/// encodings; undeclared text is UTF-8. Unsupported declared charsets fail closed
-/// instead of being silently reinterpreted.
-/// </remarks>
