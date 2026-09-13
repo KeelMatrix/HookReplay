@@ -2,6 +2,18 @@
 
 namespace KeelMatrix.HookReplay;
 
+internal sealed class CassetteHeader
+{
+    public CassetteHeader(string name, string value)
+    {
+        Name = name;
+        Value = value;
+    }
+
+    public string Name { get; }
+    public string Value { get; }
+}
+
 internal sealed class CassetteInteraction
 {
     public CassetteRequest Request { get; set; } = null!;

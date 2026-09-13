@@ -4,18 +4,6 @@ using System.Text.Json;
 
 namespace KeelMatrix.HookReplay;
 
-internal sealed class CassetteHeader
-{
-    public CassetteHeader(string name, string value)
-    {
-        Name = name;
-        Value = value;
-    }
-
-    public string Name { get; }
-    public string Value { get; }
-}
-
 internal static class CassetteFile
 {
     internal const long MaxCassetteBytes = 32L * 1024 * 1024;
