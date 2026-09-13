@@ -149,7 +149,7 @@ public sealed class HookReplayBehaviorTests
     public async Task Cassette_size_limit_is_checked_before_replacement_and_preserves_valid_content()
     {
         string cassette = NewCassettePath();
-        int existingBodyLength = (int)CassetteFile.MaxCassetteBytes - 8192;
+        int existingBodyLength = (int)CassetteFileSystem.MaxCassetteBytes - 8192;
         var existing = new CassetteInteraction
         {
             Request = new CassetteRequest
@@ -179,13 +179,13 @@ public sealed class HookReplayBehaviorTests
 
         try
         {
-            await CassetteFile.WriteAsync(
+            await CassetteFileSystem.WriteAsync(
                 cassette,
                 1,
                 new[] { existing },
                 CancellationToken.None);
             byte[] before = await File.ReadAllBytesAsync(cassette);
-            Assert.InRange(before.LongLength, 1, CassetteFile.MaxCassetteBytes);
+            Assert.InRange(before.LongLength, 1, CassetteFileSystem.MaxCassetteBytes);
 
             var recordOptions = new HookReplayOptions(cassette)
             {
@@ -204,7 +204,7 @@ public sealed class HookReplayBehaviorTests
             Assert.Contains("32 MiB", exception.Message, StringComparison.Ordinal);
             Assert.Equal(before, await File.ReadAllBytesAsync(cassette));
 
-            IReadOnlyList<CassetteInteraction> readable = await CassetteFile.ReadAsync(
+            IReadOnlyList<CassetteInteraction> readable = await CassetteReader.ReadAsync(
                 cassette,
                 1,
                 new HttpSanitizer(Array.Empty<ITextRedactor>()),
@@ -222,7 +222,7 @@ public sealed class HookReplayBehaviorTests
     {
         string cassette = NewCassettePath();
         byte[] valid = Encoding.UTF8.GetBytes(ValidCassette("1.1", "200"));
-        byte[] grown = new byte[(int)CassetteFile.MaxCassetteBytes + 1];
+        byte[] grown = new byte[(int)CassetteFileSystem.MaxCassetteBytes + 1];
         Buffer.BlockCopy(valid, 0, grown, 0, valid.Length);
         Array.Fill(grown, (byte)' ', valid.Length, grown.Length - valid.Length);
         await File.WriteAllBytesAsync(cassette, valid);
@@ -231,7 +231,7 @@ public sealed class HookReplayBehaviorTests
         {
             using var source = new GrowingCassetteStream(grown, valid.LongLength);
             HookReplaySizeLimitException exception = await Assert.ThrowsAsync<HookReplaySizeLimitException>(
-                () => CassetteFile.ReadAsync(
+            () => CassetteReader.ReadAsync(
                     cassette,
                     1,
                     new HttpSanitizer(Array.Empty<ITextRedactor>()),
@@ -254,23 +254,23 @@ public sealed class HookReplayBehaviorTests
 
         try
         {
-            await CassetteFile.WriteAsync(
+            await CassetteFileSystem.WriteAsync(
                 cassette,
                 1,
                 new[] { emptyBody },
                 CancellationToken.None);
             long emptyBodyLength = new FileInfo(cassette).Length;
-            int bodyLength = checked((int)(CassetteFile.MaxCassetteBytes - emptyBodyLength));
+            int bodyLength = checked((int)(CassetteFileSystem.MaxCassetteBytes - emptyBodyLength));
 
             DeleteCassette(cassette);
-            await CassetteFile.WriteAsync(
+            await CassetteFileSystem.WriteAsync(
                 cassette,
                 1,
                 new[] { BoundaryInteraction(new string('x', bodyLength)) },
                 CancellationToken.None);
 
-            Assert.Equal(CassetteFile.MaxCassetteBytes, new FileInfo(cassette).Length);
-            IReadOnlyList<CassetteInteraction> readable = await CassetteFile.ReadAsync(
+            Assert.Equal(CassetteFileSystem.MaxCassetteBytes, new FileInfo(cassette).Length);
+            IReadOnlyList<CassetteInteraction> readable = await CassetteReader.ReadAsync(
                 cassette,
                 1,
                 new HttpSanitizer(Array.Empty<ITextRedactor>()),
@@ -281,7 +281,7 @@ public sealed class HookReplayBehaviorTests
                 append.WriteByte((byte)' ');
 
             HookReplaySizeLimitException exception = await Assert.ThrowsAsync<HookReplaySizeLimitException>(
-                () => CassetteFile.ReadAsync(
+            () => CassetteReader.ReadAsync(
                     cassette,
                     1,
                     new HttpSanitizer(Array.Empty<ITextRedactor>()),

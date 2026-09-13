@@ -52,7 +52,7 @@ public sealed class HookReplayRemediationTests
             Assert.Contains("%2A%2A%2A", cassetteText, StringComparison.Ordinal);
             Assert.Contains("%5BCUSTOM%5D", cassetteText, StringComparison.Ordinal);
 
-            IReadOnlyList<CassetteInteraction> persisted = await CassetteFile.ReadAsync(
+            IReadOnlyList<CassetteInteraction> persisted = await CassetteReader.ReadAsync(
                 cassette,
                 1,
                 new HttpSanitizer(recordOptions.Redactors),
@@ -301,7 +301,7 @@ public sealed class HookReplayRemediationTests
                 Assert.Equal(rawBytes.LongLength, response.Content.Headers.ContentLength);
             }
 
-            IReadOnlyList<CassetteInteraction> persisted = await CassetteFile.ReadAsync(
+            IReadOnlyList<CassetteInteraction> persisted = await CassetteReader.ReadAsync(
                 cassette,
                 1,
                 new HttpSanitizer(Array.Empty<ITextRedactor>()),
@@ -356,7 +356,7 @@ public sealed class HookReplayRemediationTests
                 Assert.True(response.Content.Headers.Contains("Content-MD5"));
             }
 
-            IReadOnlyList<CassetteInteraction> persisted = await CassetteFile.ReadAsync(
+            IReadOnlyList<CassetteInteraction> persisted = await CassetteReader.ReadAsync(
                 cassette,
                 1,
                 new HttpSanitizer(Array.Empty<ITextRedactor>()),
@@ -436,7 +436,7 @@ public sealed class HookReplayRemediationTests
             Assert.DoesNotContain(responseDigest, cassetteText, StringComparison.Ordinal);
             Assert.DoesNotContain("Transfer-Encoding", cassetteText, StringComparison.Ordinal);
 
-            IReadOnlyList<CassetteInteraction> persisted = await CassetteFile.ReadAsync(
+            IReadOnlyList<CassetteInteraction> persisted = await CassetteReader.ReadAsync(
                 cassette,
                 1,
                 new HttpSanitizer(Array.Empty<ITextRedactor>()),
@@ -536,7 +536,7 @@ public sealed class HookReplayRemediationTests
             string cassetteText = await File.ReadAllTextAsync(cassette);
             Assert.Contains("\"contentType\": null", cassetteText, StringComparison.Ordinal);
 
-            IReadOnlyList<CassetteInteraction> persisted = await CassetteFile.ReadAsync(
+            IReadOnlyList<CassetteInteraction> persisted = await CassetteReader.ReadAsync(
                 cassette,
                 1,
                 new HttpSanitizer(Array.Empty<ITextRedactor>()),
@@ -615,7 +615,7 @@ public sealed class HookReplayRemediationTests
     public async Task Size_limit_failure_leaves_no_replayable_ghost_interaction()
     {
         string cassette = NewCassettePath();
-        int existingBodyLength = (int)CassetteFile.MaxCassetteBytes - 8192;
+        int existingBodyLength = (int)CassetteFileSystem.MaxCassetteBytes - 8192;
         var existing = new CassetteInteraction
         {
             Request = new CassetteRequest
@@ -645,7 +645,7 @@ public sealed class HookReplayRemediationTests
 
         try
         {
-            await CassetteFile.WriteAsync(
+            await CassetteFileSystem.WriteAsync(
                 cassette,
                 1,
                 new[] { existing },

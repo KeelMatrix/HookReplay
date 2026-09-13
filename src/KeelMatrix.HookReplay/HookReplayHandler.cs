@@ -48,7 +48,7 @@ public sealed class HookReplayHandler : DelegatingHandler
             throw new ArgumentOutOfRangeException(nameof(options), "The HookReplay mode is not supported.");
         if (options.MaxBodyBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(options), "MaxBodyBytes must be greater than zero.");
-        CassetteFile.ValidatePath(options.CassettePath);
+        CassettePath.ValidatePath(options.CassettePath);
         this.options = SnapshotOptions(options);
     }
 
@@ -57,7 +57,7 @@ public sealed class HookReplayHandler : DelegatingHandler
         if (options is null)
             throw new ArgumentNullException(nameof(options));
 
-        CassetteFile.ValidatePath(options.CassettePath);
+        CassettePath.ValidatePath(options.CassettePath);
         return new HookReplayTelemetry();
     }
 
@@ -280,7 +280,7 @@ public sealed class HookReplayHandler : DelegatingHandler
                 return;
 
             IReadOnlyList<CassetteInteraction> existing =
-                await CassetteFile.ReadAsync(
+                await CassetteReader.ReadAsync(
                     options.CassettePath,
                     CassetteSchemaVersion,
                     new HttpSanitizer(options.Redactors),
@@ -301,10 +301,10 @@ public sealed class HookReplayHandler : DelegatingHandler
         {
             if (!loaded)
             {
-                if (CassetteFile.Exists(options.CassettePath))
+                if (CassetteFileSystem.Exists(options.CassettePath))
                 {
                     IReadOnlyList<CassetteInteraction> existing =
-                        await CassetteFile.ReadAsync(
+                        await CassetteReader.ReadAsync(
                             options.CassettePath,
                             CassetteSchemaVersion,
                             new HttpSanitizer(options.Redactors),
@@ -317,7 +317,7 @@ public sealed class HookReplayHandler : DelegatingHandler
             interactions.Add(interaction);
             try
             {
-                await CassetteFile.WriteAsync(
+                await CassetteFileSystem.WriteAsync(
                     options.CassettePath,
                     CassetteSchemaVersion,
                     interactions,
