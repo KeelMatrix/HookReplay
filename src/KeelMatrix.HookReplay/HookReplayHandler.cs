@@ -1,10 +1,7 @@
 ﻿using KeelMatrix.Redaction;
-using KeelMatrix.Telemetry;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleTo("KeelMatrix.HookReplay.Tests")]
@@ -419,92 +416,5 @@ public sealed class HookReplayHandler : DelegatingHandler
         }
 
         base.Dispose(disposing);
-    }
-}
-
-internal sealed class CassetteInteraction
-{
-    public CassetteRequest Request { get; set; } = null!;
-    public CassetteResponse Response { get; set; } = null!;
-    public bool Consumed { get; set; }
-}
-
-internal sealed class CassetteRequest
-{
-    public string Method { get; set; } = string.Empty;
-    public string NormalizedUri { get; set; } = string.Empty;
-    public string? BodyFingerprint { get; set; }
-    public string? Body { get; set; }
-    public string? BodyContentType { get; set; }
-    public List<CassetteHeader> Headers { get; set; } = new();
-    public List<CassetteHeader> MatchHeaders { get; set; } = new();
-}
-
-internal sealed class CassetteResponse
-{
-    public int StatusCode { get; set; }
-    public string? ReasonPhrase { get; set; }
-    public Version Version { get; set; } = HttpVersion.Version11;
-    public List<CassetteHeader> Headers { get; set; } = new();
-    public List<CassetteHeader> BodyHeaders { get; set; } = new();
-    public CassetteBody? Body { get; set; }
-}
-
-internal sealed class CassetteBody
-{
-    /// <summary>
-    /// The declared content type, or <see langword="null"/> when the captured content had none.
-    /// </summary>
-    /// <remarks>
-    /// A null value means "no content type was declared", and replay must not synthesize one.
-    /// </remarks>
-    public string? ContentType { get; set; }
-
-    public string Text { get; set; } = string.Empty;
-}
-
-internal interface IHookReplayTelemetry
-{
-    void TrackActivation();
-
-    void TrackHeartbeat();
-}
-
-internal sealed class HookReplayTelemetry : IHookReplayTelemetry
-{
-    private readonly Client? client;
-
-    public HookReplayTelemetry()
-    {
-        try
-        {
-            client = new Client("HookReplay", typeof(HookReplayHandler));
-        }
-        catch
-        {
-            client = null;
-        }
-    }
-
-    public void TrackActivation()
-    {
-        try
-        {
-            client?.TrackActivation();
-        }
-        catch
-        {
-        }
-    }
-
-    public void TrackHeartbeat()
-    {
-        try
-        {
-            client?.TrackHeartbeat();
-        }
-        catch
-        {
-        }
     }
 }
