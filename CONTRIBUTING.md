@@ -6,7 +6,7 @@ Keep changes focused on documented HookReplay behavior and use synthetic, secret
 
 Install the .NET SDK version in `global.json`. The canonical developer commands are in `AGENTS.md`:
 
-```text
+```powershell
 dotnet restore KeelMatrix.HookReplay.sln --configfile NuGet.config
 dotnet build KeelMatrix.HookReplay.sln -c Release --no-restore
 dotnet test KeelMatrix.HookReplay.sln -c Release --no-build

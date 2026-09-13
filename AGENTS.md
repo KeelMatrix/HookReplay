@@ -9,18 +9,18 @@
 
 ## Commands
 
-- Restore: dotnet restore KeelMatrix.HookReplay.sln --configfile NuGet.config
-- Format check: dotnet format KeelMatrix.HookReplay.sln --verify-no-changes
-- Release build: dotnet build KeelMatrix.HookReplay.sln -c Release --no-restore
-- Tests: dotnet test KeelMatrix.HookReplay.sln -c Release --no-build
-- Package: dotnet pack src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj -c Release --no-build --include-symbols --output artifacts/packages
+- Restore: `dotnet restore KeelMatrix.HookReplay.sln --configfile NuGet.config`
+- Format check: `dotnet format KeelMatrix.HookReplay.sln --verify-no-changes`
+- Release build: `dotnet build KeelMatrix.HookReplay.sln -c Release --no-restore`
+- Tests: `dotnet test KeelMatrix.HookReplay.sln -c Release --no-build`
+- Package: `dotnet pack src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj -c Release --no-build --include-symbols --output artifacts/packages`
 - Vulnerability check: `pwsh -NoProfile -File scripts/CheckVulnerabilities.ps1` (audits direct and transitive packages and fails closed)
 - Local tests: `dotnet test KeelMatrix.HookReplay.sln -c Release` (the test assembly enforces non-production telemetry suppression)
 - Package-consumer smoke: `pwsh -NoProfile -File tests/RunPackageConsumerSmoke.ps1`
 
 Before creating a release tag, finalize the target `CHANGELOG.md` entry with a release date and run the same publication-gate check on the exact commit that will be tagged:
 
-```text
+```powershell
 pwsh -NoProfile -File scripts/Test-ChangelogContract.ps1 -Tag vX.Y.Z -ExpectedPackageVersion X.Y.Z -ExpectedCommit (git rev-parse HEAD)
 ```
 
@@ -33,7 +33,7 @@ The check must pass after the changelog finalization is committed and pushed. Do
 - Sanitization happens before any cassette bytes are written.
 - Request identity never persists raw authorization, cookie, token, or API-key values.
 - Request and response bodies are bounded and only supported text, JSON, form, or empty content is accepted.
-- The shipping API is equivalent on net8.0 and netstandard2.0.
+- The shipping API is equivalent on `net8.0` and `netstandard2.0`.
 - Product runtime network behavior is limited to explicit Record mode and its configured transport. Release and package publication, when authorized, belong only in the tag-triggered release workflow; shipping code and tests do not publish artifacts.
 
 ## Validation strategy

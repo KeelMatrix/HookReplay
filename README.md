@@ -1,16 +1,16 @@
 # KeelMatrix.HookReplay
 
-Real HTTP calls make integration tests slow and flaky. HookReplay records an intentional HttpClient exchange once, then replays it deterministically with no network fallback and cassettes designed to be safe to commit.
+Real HTTP calls make integration tests slow and flaky. HookReplay records an intentional `HttpClient` exchange once, then replays it deterministically with no network fallback and cassettes designed to be safe to commit.
 
 ## Install
 
 ~~~bash
-dotnet add package KeelMatrix.HookReplay --version 0.1.0
+dotnet add package KeelMatrix.HookReplay
 ~~~
 
-## Five-minute record and replay
+## Quick Start
 
-Record an exchange through the normal HttpClient API:
+Record an exchange through the normal `HttpClient` API:
 
 ~~~csharp
 using KeelMatrix.HookReplay;
@@ -38,15 +38,15 @@ HttpResponseMessage response =
     await client.GetAsync("https://api.github.com/users/octocat");
 ~~~
 
-Replay never falls back to the network. A cassette miss throws HookReplayMismatchException, even when an inner handler is configured. This makes replay suitable for offline tests and CI where an accidental live request must fail closed.
+Replay never falls back to the network. A cassette miss throws `HookReplayMismatchException`, even when an inner handler is configured. This makes replay suitable for offline tests and CI where an accidental live request must fail closed.
 
 ## Record versus Replay
 
-Record sends requests only through the configured inner transport, captures successful responses, sanitizes the exchange, and persists the versioned cassette. The default transport used by HookReplayClient.Create is HttpClientHandler.
+Record sends requests only through the configured inner transport, captures successful responses, sanitizes the exchange, and persists the versioned cassette. The default transport used by `HookReplayClient.Create` is `HttpClientHandler`.
 
 Replay reads the cassette and returns a reconstructed response without invoking its inner handler. Repeated identical requests consume matching interactions sequentially. Concurrent indistinguishable requests are not deterministically orderable; supply a distinguishing selected header or custom matcher when ordering matters.
 
-For explicit handler composition:
+For explicit handler composition with `HookReplayHandler`:
 
 ~~~csharp
 using var transport = new HttpClientHandler();
@@ -64,7 +64,7 @@ Redaction is deliberately conservative: a path segment that looks like a protect
 options.MatchHeaders.Add("x-tenant-id");
 ~~~
 
-Selected headers are sanitized before they are persisted or used in diagnostics. Sensitive selected headers use one-way fingerprints. Headers that describe the pre-sanitization body or its framing (`Content-Length`, `Content-MD5`, `Content-Digest`, `Repr-Digest`, `Digest`, and `Transfer-Encoding`) cannot be selected for matching; they are dropped from the persisted request identity. For bounded custom matching, implement IHookReplayRequestMatcher; it receives sanitized request descriptions only:
+Selected headers are sanitized before they are persisted or used in diagnostics. Sensitive selected headers use one-way fingerprints. Headers that describe the pre-sanitization body or its framing (`Content-Length`, `Content-MD5`, `Content-Digest`, `Repr-Digest`, `Digest`, and `Transfer-Encoding`) cannot be selected for matching; they are dropped from the persisted request identity. For bounded custom matching, implement `IHookReplayRequestMatcher`; it receives sanitized request descriptions only:
 
 ~~~csharp
 options.RequestMatcher = new TenantMatcher();
@@ -82,9 +82,9 @@ Mismatch diagnostics rank unconsumed candidates by the number of mismatching dim
 
 ## Cassette format and safety
 
-Cassettes are HookReplay schema version 1 JSON. They are UTF-8 with a final LF, stable property order, sorted headers/query parameters, and no machine-specific paths. The total durable cassette, including all interactions, is limited to 32 MiB; Record rejects an oversized update before replacing the previous cassette, and Replay rejects a file beyond the same limit. Unsupported future schema versions fail with HookReplayUnsupportedCassetteVersionException; malformed files fail with HookReplayMalformedCassetteException. Replay revalidates persisted request and response content types, body representations, body fingerprints, and content-type headers before matching or returning a response, so unsupported or internally inconsistent content fails with a HookReplay-specific exception.
+Cassettes are HookReplay schema version 1 JSON. They are UTF-8 with a final LF, stable property order, sorted headers/query parameters, and no machine-specific paths. The total durable cassette, including all interactions, is limited to 32 MiB; Record rejects an oversized update before replacing the previous cassette, and Replay rejects a file beyond the same limit. Unsupported future schema versions fail with `HookReplayUnsupportedCassetteVersionException`; malformed files fail with `HookReplayMalformedCassetteException`. Replay revalidates persisted request and response content types, body representations, body fingerprints, and content-type headers before matching or returning a response, so unsupported or internally inconsistent content fails with a HookReplay-specific exception.
 
-Authorization, proxy authorization, cookies, set-cookie, API-key-like headers, sensitive query/form fields, common secret properties in JSON bodies, and response reason phrases are passed through the safe text-redaction boundary before persistence. The package also applies the built-in KeelMatrix.Redaction protections. Add project-specific protection without touching cassette-writing stages; configured redactors are applied to URI path segments and opaque query values, non-structural header values, response reason phrases, and text/JSON/form body values before either matching data or cassette bytes are created:
+Authorization, proxy authorization, cookies, set-cookie, API-key-like headers, sensitive query/form fields, common secret properties in JSON bodies, and response reason phrases are passed through the safe text-redaction boundary before persistence. The package also applies the built-in `KeelMatrix.Redaction` protections. Add project-specific protection without touching cassette-writing stages; configured redactors are applied to URI path segments and opaque query values, non-structural header values, response reason phrases, and text/JSON/form body values before either matching data or cassette bytes are created:
 
 ~~~csharp
 using KeelMatrix.Redaction;
@@ -98,21 +98,21 @@ Cassette paths may be relative or absolute, but parent-directory traversal and e
 
 ## Supported content and limits
 
-Empty content, text, JSON, and application/x-www-form-urlencoded content are supported for bounded request and response bodies. Text is decoded and replayed with its declared `charset` when that charset is UTF-8, US-ASCII, ISO-8859-1, UTF-16, or UTF-32; text without a declared charset is treated as UTF-8, and any other declared charset fails closed instead of being reinterpreted. The default limit is 1 MiB per body and can be changed:
+Empty content, text, JSON, and `application/x-www-form-urlencoded` content are supported for bounded request and response bodies. Text is decoded and replayed with its declared `charset` when that charset is UTF-8, US-ASCII, ISO-8859-1, UTF-16, or UTF-32; text without a declared charset is treated as UTF-8, and any other declared charset fails closed instead of being reinterpreted. The default limit is 1 MiB per body and can be changed:
 
 ~~~csharp
 options.MaxBodyBytes = 256 * 1024;
 ~~~
 
-Oversized or unsupported content fails clearly with HookReplaySizeLimitException or HookReplayUnsupportedContentException. Streaming, multipart/binary canonicalization, WebSockets, gRPC, and server-sent events are outside this package.
+Oversized or unsupported content fails clearly with `HookReplaySizeLimitException` or `HookReplayUnsupportedContentException`. Streaming, multipart/binary canonicalization, WebSockets, gRPC, and Server-Sent Events are outside this package.
 
 Replay returns the sanitized representation, so it never persists or reuses a header that described the pre-sanitization body bytes or their framing: `Content-Length`, `Content-MD5`, `Content-Digest`, `Repr-Digest`, `Digest`, and `Transfer-Encoding` are dropped from both message-level and content headers, and `Content-Length` is recalculated for the replayed bytes. A content type is replayed only when the recording declared one. Record mode still hands the real unsanitized response of the current exchange to the caller.
 
 ## Telemetry and privacy
 
-After a successful persisted record or replay, HookReplay requests the minimal shared telemetry activation and weekly heartbeat events. Payloads do not contain URLs, hosts, methods, bodies, cassette names or paths, headers, cookies, tokens, query parameters, counts, fingerprints, mismatch details, repository names, or source paths. Telemetry is best effort and cannot break record/replay. Set KEELMATRIX_NO_TELEMETRY=1, DO_NOT_TRACK=1, or use the shared repository opt-out file to disable it.
+After a successful persisted record or replay, HookReplay requests the minimal shared telemetry activation and weekly heartbeat events. Payloads do not contain URLs, hosts, methods, bodies, cassette names or paths, headers, cookies, tokens, query parameters, counts, fingerprints, mismatch details, repository names, or source paths. Telemetry is best effort and cannot break record/replay. Set `KEELMATRIX_NO_TELEMETRY=1`, `DO_NOT_TRACK=1`, or use the shared repository opt-out file to disable it.
 
-## Compatibility and policies
+## Documentation
 
 The package targets `net8.0` and `netstandard2.0`. The CI matrix validates Windows, Linux, and macOS for these shipping assets and the test suite includes cassette determinism and offline replay checks.
 
@@ -122,7 +122,7 @@ See the [cassette compatibility policy](https://github.com/KeelMatrix/HookReplay
 
 - **Cassette miss:** confirm the method, canonical URI/query, body, and any selected matching headers are the same. Replay never calls the network to fill a miss.
 - **Malformed or unsupported cassette:** check `schemaVersion`, required fields, valid JSON/content types, and the [compatibility policy](https://github.com/KeelMatrix/HookReplay/blob/main/docs/CASSETTE_COMPATIBILITY.md). Future schema versions are rejected instead of partially read.
-- **Unsupported or oversized content:** use empty, text, JSON, or URL-form content within `MaxBodyBytes`; streaming, multipart, and binary content are intentionally rejected.
+- **Unsupported or oversized content:** use empty, text, JSON, or `application/x-www-form-urlencoded` content within `MaxBodyBytes`; streaming, multipart, and binary content are intentionally rejected.
 - **Unsafe cassette path:** choose a file path without parent-directory traversal and without symbolic-link or reparse-point components.
 - **Telemetry opt-out:** set `KEELMATRIX_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or use the shared telemetry repository opt-out file.
 

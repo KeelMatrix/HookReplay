@@ -1,6 +1,6 @@
 # Cassette compatibility
 
-HookReplay cassettes are a versioned product contract. The current format is schema version `1` and is serialized as UTF-8 JSON with a final LF, stable property ordering, deterministic collection ordering, and no machine-specific paths.
+This document defines the normative compatibility contract for HookReplay cassettes. It applies to the schema version `1` format and to future format changes; the rules below govern persisted representation, matching identity, sanitization, and replay safety. The current format is serialized as UTF-8 JSON with a final LF, stable property ordering, deterministic collection ordering, and no machine-specific paths.
 
 ## Evolution rules
 
@@ -22,6 +22,6 @@ Persisted and replayed bodies are the sanitized representation. Headers that des
 
 Appending an interaction is transactional: an interaction becomes part of replay state only after the durable cassette write succeeds, so a failed write cannot leave a ghost recording behind.
 
-## Compatibility fixtures and changelog
+## Compatibility evaluation
 
-Every schema change must add a fully synthetic, secret-free compatibility fixture and tests that read and replay it. Tests must prove the fixture is not rewritten accidentally and that current serialization remains deterministic. Any compatibility-affecting change must be described in `CHANGELOG.md`, including migration or unsupported-version behavior when applicable.
+Compatibility is evaluated by reading and replaying fully synthetic, secret-free fixtures, proving that existing fixtures are not rewritten accidentally, and verifying that current serialization remains deterministic. Every schema change must add or update the applicable fixture and tests. Any compatibility-affecting change must be described in `CHANGELOG.md`, including migration or unsupported-version behavior when applicable.
