@@ -166,7 +166,7 @@ try {
 
     $rootReadmeInspection = Invoke-PackageInspection $rootReadmeCaseDirectory
     Assert-True ($rootReadmeInspection.ExitCode -ne 0) "Inspection accepted a package README copied from the repository root. Output: $($rootReadmeInspection.Output)"
-    Assert-True ($rootReadmeInspection.Output -match "byte-identical to the project-local README") "Inspection did not report the project-local README mismatch clearly. Output: $($rootReadmeInspection.Output)"
+    Assert-True ($rootReadmeInspection.Output -match "(?s)byte-identical.*project-local README") "Inspection did not report the project-local README mismatch clearly. Output: $($rootReadmeInspection.Output)"
 
     Write-Output "Package inspection contract passed: wrong-case copyright metadata and repository-root README substitutions fail with clear diagnostics and non-zero exits."
 }
