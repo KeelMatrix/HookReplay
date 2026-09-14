@@ -11,6 +11,7 @@ $ErrorActionPreference = "Stop"
 $packageId = "KeelMatrix.HookReplay"
 $expectedNupkg = "$packageId.$Version.nupkg"
 $expectedSnupkg = "$packageId.$Version.snupkg"
+$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $packageRoot = (Resolve-Path -LiteralPath $PackageDirectory).Path
 
 if ([string]::IsNullOrWhiteSpace($ExpectedCommit)) {
@@ -71,6 +72,18 @@ function Get-EntryBytes($Archive, [string] $Name) {
     }
 }
 
+function Assert-ByteEqual([byte[]] $Expected, [byte[]] $Actual, [string] $Message) {
+    if ($Expected.Length -ne $Actual.Length) {
+        Fail "$Message Expected $($Expected.Length) bytes, actual $($Actual.Length) bytes."
+    }
+
+    for ($index = 0; $index -lt $Expected.Length; $index++) {
+        if ($Expected[$index] -ne $Actual[$index]) {
+            Fail "$Message First differing byte is at offset $index."
+        }
+    }
+}
+
 function Assert-AssemblyMetadata($Archive, [string] $Name, [string] $TargetFramework) {
     $temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("hookreplay-package-inspection-" + [Guid]::NewGuid().ToString("N"))
     $temporaryPath = Join-Path $temporaryDirectory ([System.IO.Path]::GetFileName($Name))
@@ -119,6 +132,11 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $packageArchive = [System.IO.Compression.ZipFile]::OpenRead($packages[0].FullName)
 $symbolArchive = [System.IO.Compression.ZipFile]::OpenRead($symbols[0].FullName)
 try {
+    $projectReadmePath = Join-Path $repositoryRoot "src\KeelMatrix.HookReplay\README.md"
+    if (-not (Test-Path -LiteralPath $projectReadmePath -PathType Leaf)) {
+        Fail "Project-local package README is missing at '$projectReadmePath'."
+    }
+
     $packageEntries = @($packageArchive.Entries | ForEach-Object FullName)
     $symbolEntries = @($symbolArchive.Entries | ForEach-Object FullName)
     foreach ($required in @(
@@ -136,6 +154,8 @@ try {
 
     Assert-AssemblyMetadata $packageArchive "lib/net8.0/$packageId.dll" "net8.0"
     Assert-AssemblyMetadata $packageArchive "lib/netstandard2.0/$packageId.dll" "netstandard2.0"
+
+    Assert-ByteEqual ([IO.File]::ReadAllBytes($projectReadmePath)) (Get-EntryBytes $packageArchive "README.md") "Packaged README.md must be byte-identical to the project-local README at '$projectReadmePath'; it must not come from the repository-root README."
 
     foreach ($entry in $packageEntries) {
         if ($entry -match "(?i)(^|/)(src|tests|research|internal|\.github|\.git)(/|$)|(^|/)(\.env[^/]*|local\.settings\.json|appsettings\.(development|local)\.json|keelmatrix\.telemetry\.json|.*\.(secret|secrets)\.json|.*\.(pfx|p12|pem|key|crt|cer))$") {

@@ -1,6 +1,5 @@
 <Project>
   <ItemGroup Condition="'$(IsPackable)'=='true'">
-    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="" Link="README.md" Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
     <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="" Link="LICENSE" Condition="Exists('$(MSBuildThisFileDirectory)LICENSE')" />
     <None Include="$(MSBuildThisFileDirectory)icon.png" Pack="true" PackagePath="" Link="icon.png" Condition="Exists('$(MSBuildThisFileDirectory)icon.png') and '$(PackageIcon)'!=''" />
   </ItemGroup>

@@ -5,6 +5,7 @@
 - Shipping code is in src/KeelMatrix.HookReplay/.
 - Behavioral tests are in tests/KeelMatrix.HookReplay.Tests/.
 - The public API baseline lives beside the shipping project.
+- The package README lives beside the shipping project at src/KeelMatrix.HookReplay/README.md; the repository README remains the canonical repository overview.
 - Package and smoke-test output belongs under artifacts/ and is ignored by git.
 
 ## Commands
@@ -17,6 +18,7 @@
 - Vulnerability check: `pwsh -NoProfile -File scripts/CheckVulnerabilities.ps1` (audits direct and transitive packages and fails closed)
 - Local tests: `dotnet test KeelMatrix.HookReplay.sln -c Release` (the test assembly enforces non-production telemetry suppression)
 - Package-consumer smoke: `pwsh -NoProfile -File tests/RunPackageConsumerSmoke.ps1`
+- Package inspection contract: `pwsh -NoProfile -File tests/VerifyPackageInspectionContract.ps1 -PackageDirectory artifacts/packages -Version 0.1.0`
 
 Before creating a release tag, finalize the target `CHANGELOG.md` entry with a release date and run the same publication-gate check on the exact commit that will be tagged:
 
