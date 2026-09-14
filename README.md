@@ -80,6 +80,24 @@ sealed class TenantMatcher : IHookReplayRequestMatcher
 
 Mismatch diagnostics rank unconsumed candidates by the number of mismatching dimensions (method, normalized URI, selected header, or body fingerprint), with earlier cassette order breaking ties. The nearest difference is reported without echoing raw secrets.
 
+### Mismatch diagnostic example
+
+Suppose `cassettes/github-user.json` contains a recorded `GET` interaction for
+`https://api.github.com/users/octocat`. In Replay mode, this request misses:
+
+~~~csharp
+using HttpResponseMessage response = await client.GetAsync(
+    "https://api.github.com/users/octodog");
+~~~
+
+The request fails with this exact single-line message:
+
+~~~text
+No cassette interaction matched the sanitized request 'GET https://api.github.com/users/octodog'. The nearest interaction differs in normalized URI component. Replay never falls back to the network.
+~~~
+
+The URI shown in the diagnostic is the sanitized normalized URI used for matching. If the cassette contains no unconsumed interaction, the message identifies the sanitized request and explains that no unconsumed interaction remains instead.
+
 ## Cassette format and safety
 
 Cassettes are HookReplay schema version 1 JSON. They are UTF-8 with a final LF, stable property order, sorted headers/query parameters, and no machine-specific paths. The total durable cassette, including all interactions, is limited to 32 MiB; Record rejects an oversized update before replacing the previous cassette, and Replay rejects a file beyond the same limit. Unsupported future schema versions fail with `HookReplayUnsupportedCassetteVersionException`; malformed files fail with `HookReplayMalformedCassetteException`. Replay revalidates persisted request and response content types, body representations, body fingerprints, and content-type headers before matching or returning a response, so unsupported or internally inconsistent content fails with a HookReplay-specific exception.

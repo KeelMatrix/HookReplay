@@ -13,6 +13,165 @@ namespace KeelMatrix.HookReplay.Tests;
 public sealed class HookReplayRemediationTests
 {
     [Fact]
+    public async Task Replay_mismatch_diagnostics_identify_each_sanitized_attempted_request()
+    {
+        string cassette = NewCassettePath();
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("safe")
+                }))))
+            {
+                await recorder.GetAsync("https://api.github.com/users/octocat");
+            }
+
+            using var replay = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette),
+                new ThrowingHandler()));
+            HookReplayMismatchException first = await Assert.ThrowsAsync<HookReplayMismatchException>(
+                () => replay.GetAsync("https://api.github.com/users/octodog"));
+            HookReplayMismatchException second = await Assert.ThrowsAsync<HookReplayMismatchException>(
+                () => replay.GetAsync("https://api.github.com/users/other"));
+
+            Assert.Equal(
+                "No cassette interaction matched the sanitized request 'GET https://api.github.com/users/octodog'. " +
+                "The nearest interaction differs in normalized URI component. Replay never falls back to the network.",
+                first.Message);
+            Assert.Contains(
+                "sanitized request 'GET https://api.github.com/users/other'",
+                second.Message,
+                StringComparison.Ordinal);
+            Assert.Contains("normalized URI component", first.Message, StringComparison.Ordinal);
+            Assert.Contains("normalized URI component", second.Message, StringComparison.Ordinal);
+            Assert.NotEqual(first.Message, second.Message);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Custom_matcher_mismatch_diagnostic_identifies_the_sanitized_attempted_request()
+    {
+        string cassette = NewCassettePath();
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette) { Mode = HookReplayMode.Record },
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("safe")
+                }))))
+            {
+                await recorder.GetAsync("https://example.test/custom-request");
+            }
+
+            var options = new HookReplayOptions(cassette)
+            {
+                RequestMatcher = new RejectingMatcher()
+            };
+            using var replay = new HttpClient(new HookReplayHandler(options, new ThrowingHandler()));
+            HookReplayMismatchException exception = await Assert.ThrowsAsync<HookReplayMismatchException>(
+                () => replay.GetAsync("https://example.test/custom-request"));
+
+            Assert.Contains(
+                "sanitized request 'GET https://example.test/custom-request'",
+                exception.Message,
+                StringComparison.Ordinal);
+            Assert.Contains("custom matcher", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Mismatch_diagnostics_redact_built_in_and_custom_secrets_in_request_identity()
+    {
+        string cassette = NewCassettePath();
+        string builtInSecret = "AIza" + new string('Q', 35);
+        const string customSecret = "custom-redactor-secret";
+        const string selectedHeaderSecret = "selected-header-secret";
+        const string recordedHeaderSecret = "recorded-header-secret";
+        const string bodySecret = "request-body-secret";
+        string escapedBuiltInSecret = Uri.EscapeDataString(builtInSecret);
+        string escapedCustomSecret = Uri.EscapeDataString(customSecret);
+        string attemptedUri =
+            "https://example.test/v1/" + builtInSecret + "/" + customSecret +
+            "?api_key=" + escapedBuiltInSecret + "&note=" + escapedCustomSecret;
+
+        var recordOptions = new HookReplayOptions(cassette)
+        {
+            Mode = HookReplayMode.Record
+        };
+        recordOptions.MatchHeaders.Add("x-api-key");
+        recordOptions.Redactors.Add(new SentinelRedactor(customSecret, "[CUSTOM]"));
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                recordOptions,
+                new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("safe")
+                }))))
+            {
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Post,
+                    "https://example.test/recorded")
+                {
+                    Content = new StringContent("recorded body")
+                };
+                request.Headers.Add("x-api-key", recordedHeaderSecret);
+                await recorder.SendAsync(request);
+            }
+
+            var replayOptions = new HookReplayOptions(cassette);
+            replayOptions.MatchHeaders.Add("x-api-key");
+            replayOptions.Redactors.Add(new SentinelRedactor(customSecret, "[CUSTOM]"));
+            using var replay = new HttpClient(new HookReplayHandler(
+                replayOptions,
+                new ThrowingHandler()));
+            using var attempted = new HttpRequestMessage(HttpMethod.Post, attemptedUri)
+            {
+                Content = new StringContent(bodySecret)
+            };
+            attempted.Headers.Add("x-api-key", selectedHeaderSecret);
+
+            HookReplayMismatchException exception = await Assert.ThrowsAsync<HookReplayMismatchException>(
+                () => replay.SendAsync(attempted));
+
+            Assert.Contains("sanitized request 'POST https://example.test/v1/", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("%2A%2A%2A", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("%5BCUSTOM%5D", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("%5BREDACTED%5D", exception.Message, StringComparison.Ordinal);
+            foreach (string secret in new[]
+                     {
+                         builtInSecret,
+                         escapedBuiltInSecret,
+                         customSecret,
+                         escapedCustomSecret,
+                         selectedHeaderSecret,
+                         bodySecret
+                     })
+            {
+                Assert.DoesNotContain(secret, exception.Message, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
     public async Task Uri_path_values_are_redacted_before_identity_cassette_and_matcher_input()
     {
         string cassette = NewCassettePath();
@@ -883,6 +1042,14 @@ public sealed class HookReplayRemediationTests
             Observed.Add(request.NormalizedUri);
             Observed.Add(recordedRequest.NormalizedUri);
             return true;
+        }
+    }
+
+    private sealed class RejectingMatcher : IHookReplayRequestMatcher
+    {
+        public bool Matches(HookReplayRequest request, HookReplayRequest recordedRequest)
+        {
+            return false;
         }
     }
 

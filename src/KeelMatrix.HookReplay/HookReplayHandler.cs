@@ -180,7 +180,8 @@ public sealed class HookReplayHandler : DelegatingHandler
                 ? "The cassette contains no unconsumed interactions."
                 : "The nearest interaction differs in " + mismatch + ".";
             throw new HookReplayMismatchException(
-                "No cassette interaction matched the request. " + suffix +
+                "No cassette interaction matched the sanitized request '" +
+                capture.Request.Method + " " + capture.Request.NormalizedUri + "'. " + suffix +
                 " Replay never falls back to the network.");
         }
 
