@@ -23,5 +23,10 @@ dotnet_diagnostic.CA1510.severity = none
 dotnet_diagnostic.CA1850.severity = none
 dotnet_diagnostic.CA2249.severity = none
 
+[tests/KeelMatrix.HookReplay.Tests/*.cs]
+# Descriptive xUnit test names use underscores to make behavior boundaries readable.
+# CA1707 is therefore deliberately not applicable to this test-only naming convention.
+dotnet_diagnostic.CA1707.severity = none
+
 [*.{csproj,props,targets}]
 indent_size = 2

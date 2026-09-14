@@ -29,8 +29,9 @@ try {
     Invoke-CommandChecked "dotnet" @(
         "restore", $solution, "--configfile", (Join-Path $repositoryRoot "NuGet.config")
     )
-    Invoke-CommandChecked "dotnet" @(
-        "build", $solution, "--configuration", "Release", "--no-restore", "-p:Version=$version"
+    Invoke-CommandChecked "pwsh" @(
+        "-NoProfile", "-File", (Join-Path $PSScriptRoot "Test-ReleaseBuild.ps1"),
+        "-SolutionPath", $solution, "-Version", $version
     )
     Invoke-CommandChecked "dotnet" @(
         "test", $solution, "--configuration", "Release", "--no-build", "-p:Version=$version"

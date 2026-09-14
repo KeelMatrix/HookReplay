@@ -9,6 +9,7 @@ Install the .NET SDK version in `global.json`. The canonical developer commands 
 ```powershell
 dotnet restore KeelMatrix.HookReplay.sln --configfile NuGet.config
 dotnet build KeelMatrix.HookReplay.sln -c Release --no-restore
+pwsh -NoProfile -File scripts/Test-ReleaseBuild.ps1
 dotnet test KeelMatrix.HookReplay.sln -c Release --no-build
 dotnet format KeelMatrix.HookReplay.sln --verify-no-changes
 dotnet pack src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj -c Release --no-build --include-symbols --output artifacts/packages

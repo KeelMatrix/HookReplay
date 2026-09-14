@@ -498,7 +498,7 @@ public sealed class HookReplayRemediationTests
         recordedContent.Headers.ContentLength = rawBytes.LongLength;
         recordedContent.Headers.TryAddWithoutValidation(
             "Content-MD5",
-            Convert.ToBase64String(MD5.HashData(rawBytes)));
+            Convert.ToBase64String(SHA256.HashData(rawBytes)));
 
         try
         {
@@ -573,7 +573,7 @@ public sealed class HookReplayRemediationTests
                     content.Headers.ContentLength = rawBytes.LongLength;
                     content.Headers.TryAddWithoutValidation(
                         "Content-MD5",
-                        Convert.ToBase64String(MD5.HashData(rawBytes)));
+                        Convert.ToBase64String(SHA256.HashData(rawBytes)));
                     var response = new HttpResponseMessage(HttpStatusCode.OK)
                     {
                         Content = content
@@ -1077,12 +1077,11 @@ public sealed class HookReplayRemediationTests
             return content;
         }
 
-        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
         {
-            if (disposed)
-                throw new ObjectDisposedException(nameof(TrackedContent));
+            ObjectDisposedException.ThrowIf(disposed, nameof(TrackedContent));
 
-            return stream.WriteAsync(payload, 0, payload.Length);
+            await stream.WriteAsync(payload.AsMemory(), CancellationToken.None).ConfigureAwait(false);
         }
 
         protected override bool TryComputeLength(out long length)

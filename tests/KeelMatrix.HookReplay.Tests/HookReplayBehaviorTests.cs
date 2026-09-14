@@ -11,6 +11,9 @@ namespace KeelMatrix.HookReplay.Tests;
 
 public sealed class HookReplayBehaviorTests
 {
+    private static readonly string[] ExpectedDuplicateHeaderValues = { "first", "second" };
+    private static readonly string[] ExpectedTelemetryEvents = { "activation", "heartbeat", "activation", "heartbeat" };
+
     [Fact]
     public async Task Record_persists_then_replay_succeeds_without_invoking_inner_handler()
     {
@@ -850,7 +853,7 @@ public sealed class HookReplayBehaviorTests
                         ["b"] = "2"
                     }));
             Assert.Equal((HttpStatusCode)599, response.StatusCode);
-            Assert.Equal(new[] { "first", "second" }, response.Headers.GetValues("x-duplicate"));
+            Assert.Equal(ExpectedDuplicateHeaderValues, response.Headers.GetValues("x-duplicate"));
         }
 
         DeleteCassette(cassette);
@@ -1638,7 +1641,7 @@ public sealed class HookReplayBehaviorTests
 
             Assert.Equal(1, telemetry.Activations);
             Assert.Equal(1, telemetry.Heartbeats);
-            Assert.Equal(new[] { "activation", "heartbeat", "activation", "heartbeat" }, telemetry.Events);
+            Assert.Equal(ExpectedTelemetryEvents, telemetry.Events);
         }
         finally
         {
@@ -1982,7 +1985,9 @@ public sealed class HookReplayBehaviorTests
                 int total = 0;
                 while (total < buffer.Length)
                 {
-                    int read = await stream.ReadAsync(buffer, total, buffer.Length - total).ConfigureAwait(false);
+                    int read = await stream.ReadAsync(
+                        buffer.AsMemory(total, buffer.Length - total),
+                        CancellationToken.None).ConfigureAwait(false);
                     if (read == 0)
                         break;
                     total += read;
@@ -1998,8 +2003,8 @@ public sealed class HookReplayBehaviorTests
                     "Content-Length: " + body.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\r\n" +
                     "Connection: close\r\n\r\n";
                 byte[] prefix = Encoding.ASCII.GetBytes(headers);
-                await stream.WriteAsync(prefix, 0, prefix.Length).ConfigureAwait(false);
-                await stream.WriteAsync(body, 0, body.Length).ConfigureAwait(false);
+                await stream.WriteAsync(prefix.AsMemory(), CancellationToken.None).ConfigureAwait(false);
+                await stream.WriteAsync(body.AsMemory(), CancellationToken.None).ConfigureAwait(false);
             }
         }
 

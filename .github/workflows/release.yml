@@ -59,8 +59,11 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/CheckVulnerabilities.ps1 -SolutionPath KeelMatrix.HookReplay.sln -NuGetConfig NuGet.config
 
-      - name: Build Release
-        run: dotnet build KeelMatrix.HookReplay.sln --configuration Release --no-restore -p:Version=${{ steps.release-version.outputs.version }}
+      - name: Build Release solution with warnings as errors
+        env:
+          RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/Test-ReleaseBuild.ps1 -SolutionPath KeelMatrix.HookReplay.sln -Version $env:RELEASE_VERSION
 
       - name: Test Release
         run: dotnet test KeelMatrix.HookReplay.sln --configuration Release --no-build -p:Version=${{ steps.release-version.outputs.version }}

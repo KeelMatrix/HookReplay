@@ -54,6 +54,11 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tests/VerifyReleaseWorkflowContract.ps1
 
+      - name: Verify Release build gate contract (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyReleaseBuildContract.ps1
+
       - name: Verify changelog finalization contract
         shell: pwsh
         run: pwsh -NoProfile -File tests/VerifyChangelogContract.ps1
@@ -77,6 +82,12 @@ jobs:
 
       - name: Restore
         run: dotnet restore KeelMatrix.HookReplay.sln --configfile NuGet.config
+
+      - name: Build Release solution with warnings as errors
+        env:
+          PACKAGE_VERSION: ${{ steps.package-version.outputs.version }}
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/Test-ReleaseBuild.ps1 -SolutionPath KeelMatrix.HookReplay.sln -Version $env:PACKAGE_VERSION
 
       - name: Build shipping project for net8.0
         run: dotnet build src/KeelMatrix.HookReplay/KeelMatrix.HookReplay.csproj --configuration Release --no-restore --framework net8.0 -p:Version=${{ steps.package-version.outputs.version }}
