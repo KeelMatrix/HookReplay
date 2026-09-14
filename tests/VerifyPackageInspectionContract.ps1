@@ -123,7 +123,7 @@ try {
     Assert-True (Test-Path -LiteralPath $packagePath -PathType Leaf) "The expected package '$packageName' is missing."
     Assert-True (Test-Path -LiteralPath $symbolPath -PathType Leaf) "The expected symbol package '$symbolName' is missing."
 
-    $projectReadmePath = Join-Path $repositoryRoot "src\KeelMatrix.HookReplay\README.md"
+    $projectReadmePath = Join-Path $repositoryRoot "src/KeelMatrix.HookReplay/README.md"
     $rootReadmePath = Join-Path $repositoryRoot "README.md"
     Assert-True (Test-Path -LiteralPath $projectReadmePath -PathType Leaf) "The project-local README is missing."
     Assert-True (Test-Path -LiteralPath $rootReadmePath -PathType Leaf) "The repository-root README is missing."

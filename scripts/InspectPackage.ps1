@@ -132,7 +132,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $packageArchive = [System.IO.Compression.ZipFile]::OpenRead($packages[0].FullName)
 $symbolArchive = [System.IO.Compression.ZipFile]::OpenRead($symbols[0].FullName)
 try {
-    $projectReadmePath = Join-Path $repositoryRoot "src\KeelMatrix.HookReplay\README.md"
+    $projectReadmePath = Join-Path $repositoryRoot "src/KeelMatrix.HookReplay/README.md"
     if (-not (Test-Path -LiteralPath $projectReadmePath -PathType Leaf)) {
         Fail "Project-local package README is missing at '$projectReadmePath'."
     }
