@@ -1,14 +1,14 @@
 [CmdletBinding()]
 param(
-    [string] $PackageDirectory = (Join-Path $PSScriptRoot "..\artifacts\packages"),
+    [string] $PackageDirectory = (Join-Path $PSScriptRoot "../artifacts/packages"),
     [ValidatePattern('^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$')]
     [string] $Version = "0.1.0",
     [string] $ExpectedCommit = ""
 )
 
 $ErrorActionPreference = "Stop"
-$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\")).Path
-$inspectScript = Join-Path $repositoryRoot "scripts\InspectPackage.ps1"
+$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$inspectScript = Join-Path $repositoryRoot "scripts/InspectPackage.ps1"
 $packageId = "KeelMatrix.HookReplay"
 $packageRoot = (Resolve-Path -LiteralPath $PackageDirectory).Path
 $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("hookreplay-package-inspection-contract-" + [Guid]::NewGuid().ToString("N"))

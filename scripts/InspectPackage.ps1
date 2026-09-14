@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string] $PackageDirectory = (Join-Path $PSScriptRoot "..\artifacts\packages"),
+    [string] $PackageDirectory = (Join-Path $PSScriptRoot "../artifacts/packages"),
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$')]
     [string] $Version,
