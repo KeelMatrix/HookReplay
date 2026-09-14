@@ -42,8 +42,10 @@ public sealed class HookReplayHandler : DelegatingHandler
         IHookReplayTelemetry telemetry)
         : base(innerHandler ?? new HttpClientHandler())
     {
-        this.liveOptions = options ?? throw new ArgumentNullException(nameof(options));
-        this.telemetry = telemetry ?? throw new ArgumentNullException(nameof(telemetry));
+        ArgumentNullExceptionCompatibility.ThrowIfNull(options, nameof(options));
+        ArgumentNullExceptionCompatibility.ThrowIfNull(telemetry, nameof(telemetry));
+        this.liveOptions = options;
+        this.telemetry = telemetry;
         if (!Enum.IsDefined(typeof(HookReplayMode), options.Mode))
             throw new ArgumentOutOfRangeException(nameof(options), "The HookReplay mode is not supported.");
         if (options.MaxBodyBytes <= 0)
@@ -54,8 +56,7 @@ public sealed class HookReplayHandler : DelegatingHandler
 
     private static HookReplayTelemetry CreateTelemetry(HookReplayOptions options)
     {
-        if (options is null)
-            throw new ArgumentNullException(nameof(options));
+        ArgumentNullExceptionCompatibility.ThrowIfNull(options, nameof(options));
 
         CassettePath.ValidatePath(options.CassettePath);
         return new HookReplayTelemetry();
@@ -66,8 +67,7 @@ public sealed class HookReplayHandler : DelegatingHandler
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
-        if (request is null)
-            throw new ArgumentNullException(nameof(request));
+        ArgumentNullExceptionCompatibility.ThrowIfNull(request, nameof(request));
 
         switch (ValidateCurrentMode())
         {

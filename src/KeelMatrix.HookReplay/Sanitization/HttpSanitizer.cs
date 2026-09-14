@@ -178,16 +178,16 @@ internal sealed class HttpSanitizer
         string normalized = name.Replace("-", string.Empty)
             .Replace("_", string.Empty)
             .ToLowerInvariant();
-        return normalized.IndexOf("authorization", StringComparison.Ordinal) >= 0
-            || normalized.IndexOf("proxyauth", StringComparison.Ordinal) >= 0
-            || normalized.IndexOf("cookie", StringComparison.Ordinal) >= 0
-            || normalized.IndexOf("token", StringComparison.Ordinal) >= 0
-            || normalized.IndexOf("secret", StringComparison.Ordinal) >= 0
-            || normalized.IndexOf("password", StringComparison.Ordinal) >= 0
-            || normalized.IndexOf("apikey", StringComparison.Ordinal) >= 0
-            || normalized.IndexOf("credential", StringComparison.Ordinal) >= 0
-            || normalized.IndexOf("signature", StringComparison.Ordinal) >= 0
-            || normalized.IndexOf("privatekey", StringComparison.Ordinal) >= 0;
+        return StringCompatibility.ContainsOrdinal(normalized, "authorization")
+            || StringCompatibility.ContainsOrdinal(normalized, "proxyauth")
+            || StringCompatibility.ContainsOrdinal(normalized, "cookie")
+            || StringCompatibility.ContainsOrdinal(normalized, "token")
+            || StringCompatibility.ContainsOrdinal(normalized, "secret")
+            || StringCompatibility.ContainsOrdinal(normalized, "password")
+            || StringCompatibility.ContainsOrdinal(normalized, "apikey")
+            || StringCompatibility.ContainsOrdinal(normalized, "credential")
+            || StringCompatibility.ContainsOrdinal(normalized, "signature")
+            || StringCompatibility.ContainsOrdinal(normalized, "privatekey");
     }
 
     private string SanitizeForm(string text)
@@ -312,8 +312,7 @@ internal sealed class HttpSanitizer
 
     private static string BodyHash(string value)
     {
-        using SHA256 sha = SHA256.Create();
-        byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(value));
+        byte[] hash = Sha256Compatibility.HashData(Encoding.UTF8.GetBytes(value));
         var builder = new StringBuilder(hash.Length * 2);
         foreach (byte valueByte in hash)
             builder.Append(valueByte.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));

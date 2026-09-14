@@ -134,10 +134,10 @@ internal static class CassetteReader
             string headerName = RequiredString(header, "name");
             string headerValue = RequiredString(header, "value");
             if (string.IsNullOrWhiteSpace(headerName) ||
-                headerName.IndexOf('\r') >= 0 ||
-                headerName.IndexOf('\n') >= 0 ||
-                headerValue.IndexOf('\r') >= 0 ||
-                headerValue.IndexOf('\n') >= 0)
+                StringCompatibility.Contains(headerName, '\r') ||
+                StringCompatibility.Contains(headerName, '\n') ||
+                StringCompatibility.Contains(headerValue, '\r') ||
+                StringCompatibility.Contains(headerValue, '\n'))
             {
                 throw new HookReplayMalformedCassetteException(
                     "Cassette headers must contain valid names and values without line breaks.");

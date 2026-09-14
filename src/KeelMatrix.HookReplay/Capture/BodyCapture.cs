@@ -1,6 +1,5 @@
 ﻿using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text;
 
 namespace KeelMatrix.HookReplay;
@@ -116,8 +115,7 @@ internal sealed class BodyCapture
 
     internal static string ComputeFingerprint(string value)
     {
-        using SHA256 sha = SHA256.Create();
-        byte[] bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(value));
+        byte[] bytes = Sha256Compatibility.HashData(Encoding.UTF8.GetBytes(value));
         var builder = new StringBuilder(bytes.Length * 2);
         foreach (byte valueByte in bytes)
             builder.Append(valueByte.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));

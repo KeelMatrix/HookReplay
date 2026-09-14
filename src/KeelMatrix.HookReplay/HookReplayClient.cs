@@ -13,8 +13,7 @@ public static class HookReplayClient
     /// <returns>A disposable <see cref="HttpClient"/>.</returns>
     public static HttpClient Create(HookReplayOptions options, HttpMessageHandler? innerHandler = null)
     {
-        if (options is null)
-            throw new ArgumentNullException(nameof(options));
+        ArgumentNullExceptionCompatibility.ThrowIfNull(options, nameof(options));
         innerHandler ??= new HttpClientHandler();
         return new HttpClient(new HookReplayHandler(options, innerHandler), disposeHandler: true);
     }

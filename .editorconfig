@@ -19,9 +19,6 @@ dotnet_diagnostic.RS0016.severity = error
 dotnet_diagnostic.RS0017.severity = error
 dotnet_diagnostic.RS0025.severity = error
 dotnet_diagnostic.RS0037.severity = error
-dotnet_diagnostic.CA1510.severity = none
-dotnet_diagnostic.CA1850.severity = none
-dotnet_diagnostic.CA2249.severity = none
 
 [tests/KeelMatrix.HookReplay.Tests/*.cs]
 # Descriptive xUnit test names use underscores to make behavior boundaries readable.
