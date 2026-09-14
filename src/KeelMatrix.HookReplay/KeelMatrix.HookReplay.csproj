@@ -43,6 +43,6 @@
     <PackageReference Update="System.Text.Json" ExcludeAssets="all" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="$(MSBuildProjectDirectory)\README.md" Pack="true" PackagePath="" />
+    <None Include="$(MSBuildProjectDirectory)/README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 </Project>
