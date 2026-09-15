@@ -8,27 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.1.0] - 2026-09-15
 
-Initial package contents for the first release.
-
 ### Added
 
-- Record and replay `HttpClient` exchanges with deterministic, versioned cassettes.
-- Enforce replay-only operation without network fallback.
-- Sanitize sensitive HTTP material before durable cassette writes.
-
-### Changed
-
-- Sanitize response reason phrases before cassette persistence.
-- Keep release metadata aligned with the validated package version.
-
-### Fixed
-
-- Redact URI path segments before they become matching identity, custom-matcher input, or cassette data, including percent-encoded values.
-- Dispose superseded request and response content after capture so replaced content is neither leaked nor reused, including on capture, sanitization, and persistence failures.
-- Honor a supported declared text `charset` instead of decoding and replaying every text body as UTF-8; unsupported declared charsets fail closed.
-- Do not synthesize a response `Content-Type` that was never captured, and neither persist nor replay body-length, integrity-digest, or transfer-framing headers that describe the pre-sanitization body, including in the message-level header collections.
-- Roll back the in-memory interaction list when a durable cassette append fails, so a failed interaction cannot later become a replayable ghost recording.
-
-### Compatibility
-
-- Cassette schema version 1 now allows `request.bodyContentType` and response `body.contentType` to be `null` when the captured content declared no content type. Cassettes that declare a content type are unaffected, and replay never invents one.
+* Record and replay `HttpClient` exchanges through an explicit `Record` or `Replay` mode, with Replay guaranteed never to fall back to the network.
+* Deterministic, versioned JSON cassettes designed for stable use across Windows, Linux, and macOS.
+* Request matching based on HTTP method, normalized URI, and supported-body fingerprint, with opt-in header matching and a custom matcher extension point.
+* Secret-safe cassette persistence and sanitized mismatch diagnostics, including built-in protection for common credentials, tokens, cookies, sensitive HTTP data, and supported request and response bodies.
+* Bounded handling of empty, text, JSON, and form content with clear failures for unsupported or oversized bodies.
+* Sequential replay of repeated identical requests, with explicit support for distinguishing otherwise ambiguous requests through selected headers or custom matching.
+* Support for `net8.0` and `netstandard2.0`.
+* Minimal best-effort activation and weekly usage telemetry through `KeelMatrix.Telemetry`, with documented opt-out controls and no request, response, or cassette content included in telemetry.
