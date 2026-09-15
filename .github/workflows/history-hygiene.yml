@@ -2,6 +2,8 @@ name: Commit history hygiene
 
 on:
   push:
+    branches:
+      - '**'
   pull_request:
 
 permissions:
@@ -16,9 +18,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch all refs
+      - name: Refresh remote branches
         shell: bash
-        run: git fetch --all --tags --prune
+        run: git fetch --all --prune
 
       - name: Check all reachable commits
         shell: bash

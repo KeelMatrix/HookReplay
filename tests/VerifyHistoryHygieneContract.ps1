@@ -38,7 +38,55 @@ function Convert-CodePoints {
     return (-join ($CodePoint | ForEach-Object { [char] $_ }))
 }
 
+function Get-ActiveWorkflowText {
+    param([Parameter(Mandatory)] [string] $Text)
+
+    return (($Text -replace "`r`n", "`n" -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n")
+}
+
+function Assert-WorkflowContract {
+    param([Parameter(Mandatory)] [string] $Text)
+
+    $activeText = Get-ActiveWorkflowText $Text
+    $onMatch = [regex]::Match($activeText, '(?ms)^on:\s*\n(?<body>.*?)(?=^permissions:\s*$)')
+    Assert-True $onMatch.Success 'The workflow must declare branch and pull-request triggers.'
+
+    $triggerBody = $onMatch.Groups['body'].Value
+    $pushMatch = [regex]::Match($triggerBody, '(?ms)^  push:\s*\n(?<body>.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\z)')
+    Assert-True $pushMatch.Success 'The workflow must have a push trigger.'
+    $pushBody = $pushMatch.Groups['body'].Value
+    Assert-True ($pushBody -match '(?m)^    branches:\s*$') 'Push events must be scoped to branches so tag pushes cannot start this workflow.'
+    Assert-True ($pushBody -match '(?m)^      - [''\"]\*\*[''\"]\s*$') 'Push history hygiene must cover every branch.'
+    Assert-True ($pushBody -notmatch '(?m)^\s+tags(?:-ignore)?:\s*$') 'Push triggers must not opt back into tag events.'
+    Assert-True ($triggerBody -match '(?m)^  pull_request:\s*$') 'Pull requests must remain covered by history hygiene.'
+
+    Assert-True ($activeText -match '(?m)^\s+run:\s+git fetch --all --prune\s*$') 'The ref refresh must omit --tags so an existing local tag cannot be clobbered.'
+    Assert-True ($activeText -notmatch '(?m)^\s+run:.*--tags') 'The ref refresh must not use a tag-fetch form that can reject an existing tag.'
+    $fetchIndex = $activeText.IndexOf('git fetch --all --prune', [StringComparison]::Ordinal)
+    $historyCheckIndex = $activeText.IndexOf('sh .githooks/check-history', [StringComparison]::Ordinal)
+    Assert-True ($fetchIndex -ge 0 -and $historyCheckIndex -gt $fetchIndex) 'The all-reachable-commits history check must remain after the ref refresh.'
+}
+
 try {
+    $workflowPath = Join-Path $repositoryRoot '.github\workflows\history-hygiene.yml'
+    Assert-True (Test-Path -LiteralPath $workflowPath -PathType Leaf) 'The history hygiene workflow must exist.'
+    $workflowText = Get-ActiveWorkflowText (Get-Content -Raw -LiteralPath $workflowPath)
+    Assert-WorkflowContract $workflowText
+
+    $preFixWorkflowText = $workflowText.Replace(
+        "  push:`n    branches:`n      - '**'`n",
+        "  push:`n")
+    $preFixWorkflowText = $preFixWorkflowText.Replace('git fetch --all --prune', 'git fetch --all --tags --prune')
+    Assert-True ($preFixWorkflowText -ne $workflowText) 'The negative contract fixture must represent the pre-fix workflow shape.'
+    $preFixRejected = $false
+    try {
+        Assert-WorkflowContract $preFixWorkflowText
+    }
+    catch {
+        $preFixRejected = $true
+    }
+    Assert-True $preFixRejected 'The workflow contract must reject the pre-fix tag trigger and clobbering fetch shape.'
+
     $shellCommand = Get-Command 'sh' -ErrorAction SilentlyContinue
     if ($null -eq $shellCommand -and $IsWindows) {
         $gitCommand = Get-Command 'git' -ErrorAction Stop
@@ -57,6 +105,46 @@ try {
     $shellPath = $shellCommand.Source
 
     New-Item -ItemType Directory -Path $temporaryDirectory -Force | Out-Null
+
+    $remoteRepository = Join-Path $temporaryDirectory 'remote.git'
+    $sourceRepository = Join-Path $temporaryDirectory 'tag-source'
+    $checkoutRepository = Join-Path $temporaryDirectory 'tag-checkout'
+    $bareInit = Invoke-Native -FilePath 'git' -ArgumentList @('init', '--bare', '--quiet', $remoteRepository) -WorkingDirectory $temporaryDirectory
+    Assert-True ($bareInit.ExitCode -eq 0) "Could not initialize the synthetic bare remote. $($bareInit.Output)"
+    New-Item -ItemType Directory -Path $sourceRepository -Force | Out-Null
+    $sourceInit = Invoke-Native -FilePath 'git' -ArgumentList @('-C', $sourceRepository, 'init', '--quiet', '--initial-branch=main') -WorkingDirectory $temporaryDirectory
+    Assert-True ($sourceInit.ExitCode -eq 0) "Could not initialize the synthetic tag source. $($sourceInit.Output)"
+    foreach ($setting in @(@('user.name', 'KeelMatrix'), @('user.email', 'keelmatrix@gmail.com'))) {
+        $configured = Invoke-Native -FilePath 'git' -ArgumentList @('-C', $sourceRepository, 'config', $setting[0], $setting[1]) -WorkingDirectory $temporaryDirectory
+        Assert-True ($configured.ExitCode -eq 0) "Could not configure synthetic tag source identity. $($configured.Output)"
+    }
+    $tagMessagePath = Join-Path $temporaryDirectory 'tag-message.txt'
+    Set-Content -LiteralPath $tagMessagePath -Value 'Synthetic annotated release tag' -NoNewline -Encoding utf8NoBOM
+    $tagCommitResult = Invoke-Native -FilePath 'git' -ArgumentList @('-C', $sourceRepository, 'commit-tree', '4b825dc642cb6eb9a060e54bf8d69288fbee4904', '-F', $tagMessagePath) -WorkingDirectory $temporaryDirectory
+    Assert-True ($tagCommitResult.ExitCode -eq 0) "Could not create the synthetic tag target commit. $($tagCommitResult.Output)"
+    $tagCommit = $tagCommitResult.Output.Trim()
+    $updateTagBranch = Invoke-Native -FilePath 'git' -ArgumentList @('-C', $sourceRepository, 'update-ref', 'refs/heads/main', $tagCommit) -WorkingDirectory $temporaryDirectory
+    Assert-True ($updateTagBranch.ExitCode -eq 0) "Could not make the synthetic tag target reachable. $($updateTagBranch.Output)"
+    $createAnnotatedTag = Invoke-Native -FilePath 'git' -ArgumentList @('-C', $sourceRepository, 'tag', '-a', 'v0.1.0', '-m', 'Synthetic release tag', $tagCommit) -WorkingDirectory $temporaryDirectory
+    Assert-True ($createAnnotatedTag.ExitCode -eq 0) "Could not create the synthetic annotated tag. $($createAnnotatedTag.Output)"
+    $pushTagFixture = Invoke-Native -FilePath 'git' -ArgumentList @('-C', $sourceRepository, 'push', '--quiet', $remoteRepository, 'refs/heads/main', 'refs/tags/v0.1.0') -WorkingDirectory $temporaryDirectory
+    Assert-True ($pushTagFixture.ExitCode -eq 0) "Could not publish the synthetic remote tag fixture. $($pushTagFixture.Output)"
+    $cloneFixture = Invoke-Native -FilePath 'git' -ArgumentList @('clone', '--quiet', $remoteRepository, $checkoutRepository) -WorkingDirectory $temporaryDirectory
+    Assert-True ($cloneFixture.ExitCode -eq 0) "Could not create the synthetic tag-push checkout. $($cloneFixture.Output)"
+
+    $remoteTagType = Invoke-Native -FilePath 'git' -ArgumentList @('--git-dir', $remoteRepository, 'cat-file', '-t', 'refs/tags/v0.1.0') -WorkingDirectory $temporaryDirectory
+    Assert-True ($remoteTagType.ExitCode -eq 0 -and $remoteTagType.Output.Trim() -eq 'tag') "The synthetic remote tag must be annotated. $($remoteTagType.Output)"
+    $localTagRef = Invoke-Native -FilePath 'git' -ArgumentList @('-C', $checkoutRepository, 'update-ref', 'refs/tags/v0.1.0', $tagCommit) -WorkingDirectory $temporaryDirectory
+    Assert-True ($localTagRef.ExitCode -eq 0) "Could not simulate the checkout-local tag ref. $($localTagRef.Output)"
+    $localTagType = Invoke-Native -FilePath 'git' -ArgumentList @('-C', $checkoutRepository, 'cat-file', '-t', 'refs/tags/v0.1.0') -WorkingDirectory $temporaryDirectory
+    Assert-True ($localTagType.ExitCode -eq 0 -and $localTagType.Output.Trim() -eq 'commit') "The synthetic local tag ref must be lightweight. $($localTagType.Output)"
+    $legacyFetch = Invoke-Native -FilePath 'git' -ArgumentList @('-C', $checkoutRepository, 'fetch', '--all', '--tags', '--prune') -WorkingDirectory $temporaryDirectory
+    Assert-True ($legacyFetch.ExitCode -ne 0) "The pre-fix tag fetch unexpectedly succeeded. $($legacyFetch.Output)"
+    Assert-True ($legacyFetch.Output -match 'would clobber existing tag') "The pre-fix tag fetch failed for an unexpected reason. $($legacyFetch.Output)"
+    $safeFetch = Invoke-Native -FilePath 'git' -ArgumentList @('-C', $checkoutRepository, 'fetch', '--all', '--prune') -WorkingDirectory $temporaryDirectory
+    Assert-True ($safeFetch.ExitCode -eq 0) "The tag-safe ref refresh failed. $($safeFetch.Output)"
+    Write-Output "Tag-safe fetch reproduction passed: pre-fix fetch exit $($legacyFetch.ExitCode) with 'would clobber existing tag'; new fetch exit $($safeFetch.ExitCode)."
+
     New-Item -ItemType Directory -Path (Join-Path $temporaryDirectory '.githooks') -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $repositoryRoot '.githooks\commit-msg') -Destination (Join-Path $temporaryDirectory '.githooks\commit-msg')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot '.githooks\check-history') -Destination (Join-Path $temporaryDirectory '.githooks\check-history')
@@ -98,7 +186,10 @@ try {
     $cleanHistoryCheck = Invoke-Native -FilePath $shellPath -ArgumentList @('-c', ($shellPrefix + 'exec sh .githooks/check-history')) -WorkingDirectory $temporaryDirectory
     Assert-True ($cleanHistoryCheck.ExitCode -eq 0) "The full reachable-history check rejected a clean synthetic commit. $($cleanHistoryCheck.Output)"
 
-    Write-Output 'History hygiene contract passed: identity trailers are rejected directly and through the all-reachable-commits gate without leaving synthetic repository files.'
+    $currentHistoryCheck = Invoke-Native -FilePath $shellPath -ArgumentList @('-c', ($shellPrefix + 'exec sh .githooks/check-history')) -WorkingDirectory $repositoryRoot
+    Assert-True ($currentHistoryCheck.ExitCode -eq 0) "The full reachable-history check rejected the current repository history. $($currentHistoryCheck.Output)"
+
+    Write-Output 'History hygiene contract passed: the pre-fix workflow shape is rejected, the legacy tag fetch fails while the safe refresh succeeds, and identity trailers are rejected directly and through the all-reachable-commits gate.'
 }
 finally {
     if (Test-Path -LiteralPath $temporaryDirectory) {
