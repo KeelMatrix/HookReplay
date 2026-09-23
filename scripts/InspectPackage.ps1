@@ -205,12 +205,12 @@ try {
     if ($null -eq $net8 -or $null -eq $netstandard) { Fail "Expected target framework dependency groups are missing." }
     Assert-ExactDependencies $net8 @(
         "KeelMatrix.Redaction|[0.1.0]|Build,Analyzers",
-        "KeelMatrix.Telemetry|[0.1.0]|Build,Analyzers"
+        "KeelMatrix.Telemetry|[0.1.1]|Build,Analyzers"
     )
     Assert-ExactDependencies $netstandard @(
         "KeelMatrix.Redaction|[0.1.0]|Build,Analyzers",
-        "KeelMatrix.Telemetry|[0.1.0]|Build,Analyzers",
-        "System.Text.Json|10.0.10|Build,Analyzers"
+        "KeelMatrix.Telemetry|[0.1.1]|Build,Analyzers",
+        "System.Text.Json|10.0.12|Build,Analyzers"
     )
 
     $iconBytes = Get-EntryBytes $packageArchive "icon.png"
