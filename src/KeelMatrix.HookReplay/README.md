@@ -5,7 +5,7 @@ Record an intentional `HttpClient` exchange once, then replay it deterministical
 ## Install
 
 ```bash
-dotnet add package KeelMatrix.HookReplay --version 0.1.0
+dotnet add package KeelMatrix.HookReplay --version 0.1.1
 ```
 
 ## Quick Start

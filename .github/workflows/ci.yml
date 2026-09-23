@@ -40,7 +40,7 @@ jobs:
         id: package-version
         shell: pwsh
         run: |
-          $version = (& pwsh -NoProfile -File scripts/GetReleaseVersion.ps1 -Tag v0.1.0 | Out-String).Trim()
+          $version = (& pwsh -NoProfile -File scripts/GetReleaseVersion.ps1 -Tag v0.1.1 | Out-String).Trim()
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
             throw "Could not derive the CI package version."
           }

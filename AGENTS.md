@@ -18,7 +18,7 @@
 - Vulnerability check: `pwsh -NoProfile -File scripts/CheckVulnerabilities.ps1` (audits direct and transitive packages and fails closed)
 - Local tests: `dotnet test KeelMatrix.HookReplay.sln -c Release` (the test assembly enforces non-production telemetry suppression)
 - Package-consumer smoke: `pwsh -NoProfile -File tests/RunPackageConsumerSmoke.ps1`
-- Package inspection contract: `pwsh -NoProfile -File tests/VerifyPackageInspectionContract.ps1 -PackageDirectory artifacts/packages -Version 0.1.0`
+- Package inspection contract: `pwsh -NoProfile -File tests/VerifyPackageInspectionContract.ps1 -PackageDirectory artifacts/packages -Version 0.1.1`
 
 Before creating a release tag, finalize the target `CHANGELOG.md` entry with a release date and run the same publication-gate check on the exact commit that will be tagged:
 

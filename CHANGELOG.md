@@ -4,7 +4,11 @@ All notable changes to HookReplay are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.1.1] - 2026-09-23
+
+### Changed
+
+* Updated the `KeelMatrix.Telemetry` dependency to `0.1.1` and refreshed the `System.Text.Json` dependency to `10.0.12`.
 
 ## [0.1.0] - 2026-09-15
 
