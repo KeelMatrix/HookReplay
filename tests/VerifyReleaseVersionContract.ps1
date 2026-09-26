@@ -24,7 +24,7 @@ function Assert-True([bool] $Condition, [string] $Message) {
 }
 
 function Invoke-VersionScript([string] $Tag) {
-    $output = (& pwsh -NoProfile -File $versionScript -Tag $Tag 2>&1 | Out-String).Trim()
+    $output = (& pwsh -NoProfile -WindowStyle Hidden -File $versionScript -Tag $Tag 2>&1 | Out-String).Trim()
     return [pscustomobject]@{
         ExitCode = $LASTEXITCODE
         Output = $output

@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\")).Path
 $versionScript = Join-Path $PSScriptRoot "GetReleaseVersion.ps1"
-$version = (& pwsh -NoProfile -File $versionScript -Tag $Tag | Out-String).Trim()
+$version = (& pwsh -NoProfile -WindowStyle Hidden -File $versionScript -Tag $Tag | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
     throw "Could not derive a release version from tag '$Tag'."
 }

@@ -26,7 +26,7 @@ function Invoke-Contract {
     )
 
     $arguments = @(
-        "-NoProfile",
+        "-NoProfile", "-WindowStyle", "Hidden",
         "-File", $contractScript,
         "-Tag", $Tag,
         "-RepositoryRoot", $Root,
