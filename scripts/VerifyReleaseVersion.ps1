@@ -5,9 +5,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
+$pwshExecutable = 'pwsh'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\")).Path
 $versionScript = Join-Path $PSScriptRoot "GetReleaseVersion.ps1"
-$version = (& pwsh -NoProfile -WindowStyle Hidden -File $versionScript -Tag $Tag | Out-String).Trim()
+$version = (Invoke-NestedPwsh -NoProfile -File $versionScript -Tag $Tag | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
     throw "Could not derive a release version from tag '$Tag'."
 }
@@ -16,7 +18,12 @@ $expectedCommit = (& git -C $repositoryRoot rev-parse HEAD).Trim()
 $outputDirectory = Join-Path $repositoryRoot ("artifacts\release-version-verification-" + $version + "-" + [Guid]::NewGuid().ToString("N"))
 
 function Invoke-CommandChecked([string] $Command, [string[]] $Arguments) {
-    & $Command @Arguments
+    if ($Command -match '^(?i:pwsh|powershell)(?:\.exe)?$') {
+        Invoke-NestedPwsh -ArgumentList $Arguments
+    }
+    else {
+        & $Command @Arguments
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "$Command failed with exit code $LASTEXITCODE."
     }
@@ -29,7 +36,7 @@ try {
     Invoke-CommandChecked "dotnet" @(
         "restore", $solution, "--configfile", (Join-Path $repositoryRoot "NuGet.config")
     )
-    Invoke-CommandChecked "pwsh" @(
+    Invoke-CommandChecked $pwshExecutable @(
         "-NoProfile", "-File", (Join-Path $PSScriptRoot "Test-ReleaseBuild.ps1"),
         "-SolutionPath", $solution, "-Version", $version
     )
@@ -40,7 +47,7 @@ try {
         "pack", $project, "--configuration", "Release", "--no-build", "--include-symbols",
         "-p:SymbolPackageFormat=snupkg", "-p:Version=$version", "--output", $outputDirectory
     )
-    Invoke-CommandChecked "pwsh" @(
+    Invoke-CommandChecked $pwshExecutable @(
         "-NoProfile", "-File", (Join-Path $PSScriptRoot "InspectPackage.ps1"),
         "-PackageDirectory", $outputDirectory, "-Version", $version, "-ExpectedCommit", $expectedCommit
     )

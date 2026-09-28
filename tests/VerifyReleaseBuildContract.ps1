@@ -4,6 +4,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
+$pwshExecutable = 'pwsh'
 
 function Fail([string] $Message) {
     throw "Release build contract failed: $Message"
@@ -16,7 +18,12 @@ function Assert-True([bool] $Condition, [string] $Message) {
 }
 
 function Invoke-Native([string] $Command, [string[]] $Arguments) {
-    $output = @(& $Command @Arguments 2>&1)
+    if ($Command -match '^(?i:pwsh|powershell)(?:\.exe)?$') {
+        $output = @(Invoke-NestedPwsh -ArgumentList $Arguments 2>&1)
+    }
+    else {
+        $output = @(& $Command @Arguments 2>&1)
+    }
     return [pscustomobject]@{
         ExitCode = $LASTEXITCODE
         Output = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
@@ -90,7 +97,7 @@ public static class Class1
     $result = Invoke-Native "dotnet" @("restore", $solution)
     Assert-True ($result.ExitCode -eq 0) "The synthetic solution could not be restored: $($result.Output)"
 
-    $negative = Invoke-Native "pwsh" @(
+    $negative = Invoke-Native $pwshExecutable @(
         "-NoProfile", "-File", $gateScript, "-SolutionPath", $solution
     )
     Assert-True ($negative.ExitCode -ne 0) "A reintroduced compiler warning must fail the Release gate."
@@ -108,7 +115,7 @@ public static class Class1
 "@,
         $utf8Bom)
 
-    $positive = Invoke-Native "pwsh" @(
+    $positive = Invoke-Native $pwshExecutable @(
         "-NoProfile", "-File", $gateScript, "-SolutionPath", $solution
     )
     Assert-True ($positive.ExitCode -eq 0) "The clean synthetic solution must pass the Release gate: $($positive.Output)"

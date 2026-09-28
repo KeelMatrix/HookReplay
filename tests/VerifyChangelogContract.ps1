@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $contractScript = Join-Path $RepositoryRoot "scripts\Test-ChangelogContract.ps1"
 $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("hookreplay-changelog-contract-" + [Guid]::NewGuid().ToString("N"))
 
@@ -26,7 +27,7 @@ function Invoke-Contract {
     )
 
     $arguments = @(
-        "-NoProfile", "-WindowStyle", "Hidden",
+        "-NoProfile",
         "-File", $contractScript,
         "-Tag", $Tag,
         "-RepositoryRoot", $Root,
@@ -39,7 +40,7 @@ function Invoke-Contract {
         $arguments += @("-ExpectedCommit", $ExpectedCommit)
     }
 
-    $output = @(& pwsh @arguments 2>&1)
+    $output = @(Invoke-NestedPwsh @arguments 2>&1)
     return [pscustomobject]@{
         ExitCode = $LASTEXITCODE
         Output = ($output -join [Environment]::NewLine).Trim()

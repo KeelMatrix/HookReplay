@@ -7,6 +7,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
+$pwshExecutable = 'pwsh'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $inspectScript = Join-Path $repositoryRoot "scripts/InspectPackage.ps1"
 $packageId = "KeelMatrix.HookReplay"
@@ -36,7 +38,12 @@ function Invoke-Native {
 
     Push-Location -LiteralPath $WorkingDirectory
     try {
-        $output = @(& $FilePath @ArgumentList 2>&1)
+        if ($FilePath -match '^(?i:pwsh|powershell)(?:\.exe)?$') {
+            $output = @(Invoke-NestedPwsh -ArgumentList $ArgumentList 2>&1)
+        }
+        else {
+            $output = @(& $FilePath @ArgumentList 2>&1)
+        }
         $exitCode = $LASTEXITCODE
     }
     finally {
@@ -105,7 +112,7 @@ function Copy-PackageArtifacts([string] $Destination) {
 }
 
 function Invoke-PackageInspection([string] $InspectionDirectory) {
-    return Invoke-Native "pwsh" @(
+    return Invoke-Native $pwshExecutable @(
         "-NoProfile",
         "-File", $inspectScript,
         "-PackageDirectory", $InspectionDirectory,

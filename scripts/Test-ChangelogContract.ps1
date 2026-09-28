@@ -21,6 +21,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 
 function Fail([string] $Message) {
     throw "Changelog contract failed: $Message"
@@ -124,7 +125,7 @@ function Get-DeclaredPackageVersion([string] $Text) {
 
 function Get-ReleaseVersion([string] $ReleaseTag) {
     $versionScript = Join-Path $PSScriptRoot "GetReleaseVersion.ps1"
-    $output = @(& pwsh -NoProfile -WindowStyle Hidden -File $versionScript -Tag $ReleaseTag 2>&1)
+    $output = @(Invoke-NestedPwsh -NoProfile -File $versionScript -Tag $ReleaseTag 2>&1)
     if ($LASTEXITCODE -ne 0) {
         Fail "release tag '$ReleaseTag' is invalid."
     }

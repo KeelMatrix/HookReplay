@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $versionScript = Join-Path $RepositoryRoot "scripts\GetReleaseVersion.ps1"
 $releaseWorkflow = Join-Path $RepositoryRoot ".github\workflows\release.yml"
 
@@ -24,7 +25,7 @@ function Assert-True([bool] $Condition, [string] $Message) {
 }
 
 function Invoke-VersionScript([string] $Tag) {
-    $output = (& pwsh -NoProfile -WindowStyle Hidden -File $versionScript -Tag $Tag 2>&1 | Out-String).Trim()
+    $output = (Invoke-NestedPwsh -NoProfile -File $versionScript -Tag $Tag 2>&1 | Out-String).Trim()
     return [pscustomobject]@{
         ExitCode = $LASTEXITCODE
         Output = $output
