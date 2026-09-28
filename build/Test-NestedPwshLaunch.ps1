@@ -45,7 +45,7 @@ function Get-LaunchViolations([string]$Path) {
         }
 
         if ($commandName -eq 'Start-Process' -and
-            $source -notmatch '(?i)(?:-WindowStyle\s+[''"]?Hidden|CreateNoWindow|NoNewWindow)') {
+            $source -notmatch '(?i)(?:-WindowStyle\s+[''"]?Hidden|(?:\.)?WindowStyle\s*=\s*[''"]?Hidden|CreateNoWindow|NoNewWindow)') {
             [void]$violations.Add("${Path}:$($command.Extent.StartLineNumber): Start-Process lacks hidden-window containment")
         }
     }
@@ -63,13 +63,13 @@ if ($SelfTest) {
         [IO.File]::WriteAllText($directPath, '& pwsh -NoProfile')
         [IO.File]::WriteAllText($processPath, "Start-Process 'example.exe'")
         [IO.File]::WriteAllText($safePath, "Invoke-NestedPwsh -ArgumentList @('-NoProfile')")
-        if ((Get-LaunchViolations $directPath).Count -eq 0) {
+        if (@(Get-LaunchViolations $directPath).Count -eq 0) {
             throw 'The guard self-test did not reject a direct nested PowerShell launch.'
         }
-        if ((Get-LaunchViolations $processPath).Count -eq 0) {
+        if (@(Get-LaunchViolations $processPath).Count -eq 0) {
             throw 'The guard self-test did not reject a visible Start-Process launch.'
         }
-        if ((Get-LaunchViolations $safePath).Count -ne 0) {
+        if (@(Get-LaunchViolations $safePath).Count -ne 0) {
             throw 'The guard self-test rejected a helper-mediated launch.'
         }
     }
