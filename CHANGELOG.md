@@ -21,4 +21,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 * Bounded handling of empty, text, JSON, and form content with clear failures for unsupported or oversized bodies.
 * Sequential replay of repeated identical requests, with explicit support for distinguishing otherwise ambiguous requests through selected headers or custom matching.
 * Support for `net8.0` and `netstandard2.0`.
-* Minimal best-effort activation and weekly usage telemetry through `KeelMatrix.Telemetry`, with documented opt-out controls and no request, response, or cassette content included in telemetry.
+* Activation and heartbeat telemetry requests through `KeelMatrix.Telemetry` after a persisted record or cassette replay; HookReplay-specific payloads exclude request, response, and cassette content.
