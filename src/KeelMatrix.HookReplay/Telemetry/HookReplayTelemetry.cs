@@ -11,39 +11,20 @@ internal interface IHookReplayTelemetry
 
 internal sealed class HookReplayTelemetry : IHookReplayTelemetry
 {
-    private readonly Client? client;
+    private readonly Client client;
 
     public HookReplayTelemetry()
     {
-        try
-        {
-            client = new Client("HookReplay", typeof(HookReplayHandler));
-        }
-        catch
-        {
-            client = null;
-        }
+        client = new Client("HookReplay", typeof(HookReplayHandler));
     }
 
     public void TrackActivation()
     {
-        try
-        {
-            client?.TrackActivation();
-        }
-        catch
-        {
-        }
+        client.TrackActivation();
     }
 
     public void TrackHeartbeat()
     {
-        try
-        {
-            client?.TrackHeartbeat();
-        }
-        catch
-        {
-        }
+        client.TrackHeartbeat();
     }
 }

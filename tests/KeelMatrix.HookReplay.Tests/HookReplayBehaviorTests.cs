@@ -1611,10 +1611,10 @@ public sealed class HookReplayBehaviorTests
     }
 
     [Fact]
-    public async Task Telemetry_failure_cannot_break_record_or_replay_and_only_minimal_events_are_requested()
+    public async Task Successful_record_and_replay_request_minimal_telemetry_events()
     {
         string cassette = NewCassettePath();
-        var telemetry = new RecordingTelemetry { ThrowOnUse = true };
+        var telemetry = new RecordingTelemetry();
 
         try
         {
@@ -1630,7 +1630,6 @@ public sealed class HookReplayBehaviorTests
                 Assert.Equal("safe", await response.Content.ReadAsStringAsync());
             }
 
-            telemetry.ThrowOnUse = false;
             using (var replay = new HttpClient(new HookReplayHandler(
                 new HookReplayOptions(cassette),
                 new ThrowingHandler(),
@@ -1639,9 +1638,44 @@ public sealed class HookReplayBehaviorTests
                 await replay.GetAsync("https://example.test/telemetry");
             }
 
-            Assert.Equal(1, telemetry.Activations);
-            Assert.Equal(1, telemetry.Heartbeats);
+            Assert.Equal(2, telemetry.Activations);
+            Assert.Equal(2, telemetry.Heartbeats);
             Assert.Equal(ExpectedTelemetryEvents, telemetry.Events);
+        }
+        finally
+        {
+            DeleteCassette(cassette);
+        }
+    }
+
+    [Fact]
+    public async Task Failed_record_and_replay_do_not_request_telemetry()
+    {
+        string cassette = NewCassettePath();
+        var telemetry = new RecordingTelemetry();
+
+        try
+        {
+            using (var recorder = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette) { Mode = HookReplayMode.Record },
+                new ThrowingHandler(),
+                telemetry)))
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => recorder.GetAsync("https://example.test/failed-record"));
+            }
+
+            await File.WriteAllTextAsync(cassette, "{\"schemaVersion\":1,\"interactions\":[]}");
+            using (var replay = new HttpClient(new HookReplayHandler(
+                new HookReplayOptions(cassette),
+                new ThrowingHandler(),
+                telemetry)))
+            {
+                await Assert.ThrowsAsync<HookReplayMismatchException>(
+                    () => replay.GetAsync("https://example.test/missing-interaction"));
+            }
+
+            Assert.Empty(telemetry.Events);
         }
         finally
         {
@@ -1916,22 +1950,17 @@ public sealed class HookReplayBehaviorTests
     {
         public int Activations { get; private set; }
         public int Heartbeats { get; private set; }
-        public bool ThrowOnUse { get; set; }
         public List<string> Events { get; } = new();
 
         public void TrackActivation()
         {
             Events.Add("activation");
-            if (ThrowOnUse)
-                throw new InvalidOperationException("telemetry failure");
             Activations++;
         }
 
         public void TrackHeartbeat()
         {
             Events.Add("heartbeat");
-            if (ThrowOnUse)
-                throw new InvalidOperationException("telemetry failure");
             Heartbeats++;
         }
     }

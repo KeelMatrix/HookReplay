@@ -250,23 +250,8 @@ public sealed class HookReplayHandler : DelegatingHandler
 
     private void TrackTelemetry()
     {
-        try
-        {
-            telemetry.TrackActivation();
-        }
-        catch
-        {
-            // Telemetry is best-effort and must never affect record or replay.
-        }
-
-        try
-        {
-            telemetry.TrackHeartbeat();
-        }
-        catch
-        {
-            // Telemetry is best-effort and must never affect record or replay.
-        }
+        telemetry.TrackActivation();
+        telemetry.TrackHeartbeat();
     }
 
     private async Task EnsureLoadedAsync(CancellationToken cancellationToken)
