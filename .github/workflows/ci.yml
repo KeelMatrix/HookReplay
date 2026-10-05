@@ -31,6 +31,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Verify website package metadata contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyWebsitePackageMetadataContract.ps1
+
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v6
         with:
