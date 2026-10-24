@@ -1,9 +1,22 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using KeelMatrix.HookReplay;
 
 const string expectedBody = "{\"source\":\"loopback\"}";
+Assembly hookReplayAssembly = typeof(HookReplayClient).Assembly;
+AssemblyName telemetryReference = hookReplayAssembly.GetReferencedAssemblies()
+    .Single(reference => string.Equals(
+        reference.Name,
+        "KeelMatrix.Telemetry",
+        StringComparison.Ordinal));
+Assembly telemetryAssembly = Assembly.Load(telemetryReference);
+AssemblyName telemetryIdentity = telemetryAssembly.GetName();
+Ensure(
+    telemetryIdentity.Version?.Equals(telemetryReference.Version) == true,
+    $"HookReplay references '{telemetryReference.FullName}', but the consumer resolved '{telemetryIdentity.FullName}'.");
+
 string root = Path.Combine(
     Path.GetTempPath(),
     "hookreplay-package-consumer-" + Guid.NewGuid().ToString("N"));
@@ -44,6 +57,35 @@ try
             "Replay did not return the recorded response body.");
     }
     Ensure(throwing.Calls == 0, "Replay invoked the inner network handler.");
+
+    var correctedThrowing = new ThrowingHandler();
+    var correctedOptions = new HookReplayOptions(cassette)
+    {
+        Mode = HookReplayMode.Replay
+    };
+    using (var corrected = new HttpClient(new HookReplayHandler(correctedOptions, correctedThrowing)))
+    {
+        try
+        {
+            using HttpResponseMessage _ = await corrected.GetAsync(new Uri(serverUri, "/unexpected"));
+            throw new InvalidOperationException("A cassette miss was accepted.");
+        }
+        catch (HookReplayMismatchException exception)
+        {
+            Ensure(
+                exception.Message.Contains("Replay never falls back to the network.", StringComparison.Ordinal),
+                "A cassette miss did not report the no-network guarantee.");
+        }
+
+        Ensure(correctedThrowing.Calls == 0, "A cassette miss invoked the inner network handler.");
+
+        using HttpResponseMessage response = await corrected.GetAsync(serverUri);
+        Ensure(response.StatusCode == HttpStatusCode.OK, "The corrected replay did not return HTTP 200.");
+        Ensure(
+            await response.Content.ReadAsStringAsync() == expectedBody,
+            "The corrected replay did not return the recorded response body.");
+    }
+    Ensure(correctedThrowing.Calls == 0, "The corrected replay invoked the inner network handler.");
 
     string unsupportedCassette = Path.Combine(root, "unsupported-response.json");
     await File.WriteAllTextAsync(
@@ -103,7 +145,7 @@ try
     }
     Ensure(unsupportedRequestThrowing.Calls == 0, "Invalid request content reached the inner handler.");
 
-    Console.WriteLine("Package consumer smoke passed: record, offline replay, and request/response fail-closed validation.");
+    Console.WriteLine("Package consumer smoke passed: Telemetry assembly identity, record, replay, miss, corrected replay, and request/response fail-closed validation.");
 }
 finally
 {
@@ -191,3 +233,4 @@ sealed class LoopbackServer : IDisposable
         return false;
     }
 }
+
